@@ -2,24 +2,25 @@
 
 from .cropper import (
     PlateCropper,
-    TextCropper,
     PlatePreprocessor,
+    TextCropper,
 )
 from .postprocessor import (
-    TextNormalizer,
-    MultiLineConcatenator,
     LPRPostProcessor,
+    MultiLineConcatenator,
+    TextNormalizer,
 )
+
 # Note: LPRPipeline requires ML models (ultralytics, paddleocr)
 # Import explicitly: from src.pipeline.lpr_pipeline import LPRPipeline
 
 __all__ = [
+    "LPRPostProcessor",
+    "MultiLineConcatenator",
     # Cropping
     "PlateCropper",
-    "TextCropper",
     "PlatePreprocessor",
+    "TextCropper",
     # Postprocessing
     "TextNormalizer",
-    "MultiLineConcatenator",
-    "LPRPostProcessor",
 ]

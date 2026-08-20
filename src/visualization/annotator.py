@@ -7,12 +7,11 @@ Responsibilities (per PLAN.md):
 """
 
 import logging
-from typing import Optional
+
 import cv2
 import numpy as np
 
 from src.domain.models import LPRResult
-
 
 logger = logging.getLogger("lpr.visualization.annotator")
 
@@ -67,7 +66,7 @@ class ResultAnnotator:
         label = f"{text} ({confidence:.2f})"
 
         # Get text size for background
-        (text_w, text_h), baseline = cv2.getTextSize(
+        (text_w, text_h), _baseline = cv2.getTextSize(
             label,
             cv2.FONT_HERSHEY_SIMPLEX,
             self.font_scale,
@@ -218,7 +217,7 @@ class PlateDetectionAnnotator:
         """
         annotated = frame.copy()
 
-        for box, score in zip(boxes, scores):
+        for box, score in zip(boxes, scores, strict=False):
             x1, y1, x2, y2 = map(int, box)
             cv2.rectangle(annotated, (x1, y1), (x2, y2), self.plate_color, 2)
             cv2.putText(
@@ -237,7 +236,7 @@ class PlateDetectionAnnotator:
         self,
         frame: np.ndarray,
         polygons: list,
-        texts: list = None,
+        texts: list | None = None,
     ) -> np.ndarray:
         """Draw text detection boxes.
 

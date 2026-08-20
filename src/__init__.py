@@ -8,34 +8,34 @@ __version__ = "2.0.0"
 
 # Domain models - always available
 from src.domain.models import (
+    CapturedPlate,
+    LPRResult,
+    PlateCollection,
     PlateDetection,
+    PlateEvent,
     TextDetection,
     TextRecognition,
-    LPRResult,
-    CapturedPlate,
-    PlateCollection,
-    PlateEvent,
 )
-
-# Pipeline components
-from src.pipeline.postprocessor import LPRPostProcessor
 
 # Events
 from src.events.plate_collector import PlateCollector
 
+# Pipeline components
+from src.pipeline.postprocessor import LPRPostProcessor
+
 __all__ = [
-    # Version
-    "__version__",
     # Domain
-    "PlateDetection",
-    "TextDetection",
-    "TextRecognition",
-    "LPRResult",
     "CapturedPlate",
-    "PlateCollection",
-    "PlateEvent",
     # Pipeline
     "LPRPostProcessor",
+    "LPRResult",
+    "PlateCollection",
     # Events
     "PlateCollector",
+    "PlateDetection",
+    "PlateEvent",
+    "TextDetection",
+    "TextRecognition",
+    # Version
+    "__version__",
 ]

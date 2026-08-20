@@ -5,15 +5,15 @@ Responsibilities (per PLAN.md):
 - No camera, HTTP, FastAPI, Docker, or DB logic
 """
 
-import os
 import json
 import logging
+import os
 from typing import Protocol
+
 import numpy as np
 from paddleocr import TextRecognition
 
 from src.domain.models import TextRecognition as DomainTextRecognition
-
 
 logger = logging.getLogger("lpr.models.text_recognizer")
 

@@ -6,7 +6,7 @@ Responsibilities (per PLAN.md):
 """
 
 import abc
-from typing import Optional
+
 import numpy as np
 
 
@@ -28,7 +28,7 @@ class CameraBase(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def read(self) -> Optional[np.ndarray]:
+    def read(self) -> np.ndarray | None:
         """Read a frame from camera.
 
         Returns:

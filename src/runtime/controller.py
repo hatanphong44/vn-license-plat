@@ -1,10 +1,8 @@
 """Runtime controller - Manages worker lifecycle."""
 
 import logging
-from typing import Optional
 
-from src.runtime.worker import LPRRuntimeWorker, WorkerConfig
-
+from src.runtime.worker import LPRRuntimeWorker
 
 logger = logging.getLogger("lpr.runtime.controller")
 
@@ -13,10 +11,10 @@ class RuntimeController:
     """Controller for managing LPR runtime workers."""
 
     def __init__(self):
-        self._worker: Optional[LPRRuntimeWorker] = None
+        self._worker: LPRRuntimeWorker | None = None
 
     @property
-    def worker(self) -> Optional[LPRRuntimeWorker]:
+    def worker(self) -> LPRRuntimeWorker | None:
         """Get current worker."""
         return self._worker
 
@@ -59,7 +57,7 @@ class RuntimeController:
 
 
 # Global controller instance
-_controller: Optional[RuntimeController] = None
+_controller: RuntimeController | None = None
 
 
 def get_controller() -> RuntimeController:

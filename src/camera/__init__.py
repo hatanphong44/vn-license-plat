@@ -4,14 +4,11 @@ Factory functions to create camera instances based on source type.
 """
 
 import logging
-from typing import Optional
-import numpy as np
 
 from .base import CameraBase
-from .usb import USBCamera
 from .rtsp import RTSPCamera
+from .usb import USBCamera
 from .video import VideoFileCamera
-
 
 logger = logging.getLogger("lpr.camera")
 
@@ -51,7 +48,7 @@ def create_camera(
 
     # Check if it's RTSP URL
     if source_str.startswith(("rtsp://", "rtsps://", "http://", "https://")):
-        logger.info(f"Creating RTSP camera for URL")
+        logger.info("Creating RTSP camera for URL")
         return RTSPCamera(
             url=source_str,
             buffer_size=buffer_size,
@@ -61,14 +58,14 @@ def create_camera(
 
     # Check if it's a video file
     if source_str.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".flv")):
-        logger.info(f"Creating video file camera")
+        logger.info("Creating video file camera")
         return VideoFileCamera(
             video_path=source_str,
             loop=True,
         )
 
     # Default to RTSP (might be a path without extension)
-    logger.info(f"Creating RTSP camera as default")
+    logger.info("Creating RTSP camera as default")
     return RTSPCamera(
         url=source_str,
         buffer_size=buffer_size,
@@ -79,8 +76,8 @@ def create_camera(
 
 __all__ = [
     "CameraBase",
-    "USBCamera",
     "RTSPCamera",
+    "USBCamera",
     "VideoFileCamera",
     "create_camera",
 ]

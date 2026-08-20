@@ -7,13 +7,12 @@ Responsibilities (per PLAN.md):
 import logging
 import threading
 import time
-from typing import Optional, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from src.camera.base import CameraBase
+from src.events import EventPublisher, MultiPlateCollector
 from src.pipeline.lpr_pipeline import LPRPipeline
-from src.events import MultiPlateCollector, EventPublisher
-
 
 logger = logging.getLogger("lpr.runtime.worker")
 
@@ -39,10 +38,10 @@ class LPRRuntimeWorker:
         camera: CameraBase,
         pipeline: LPRPipeline,
         publisher: EventPublisher,
-        config: Optional[WorkerConfig] = None,
-        on_frame: Optional[Callable] = None,
-        on_result: Optional[Callable] = None,
-        on_error: Optional[Callable] = None,
+        config: WorkerConfig | None = None,
+        on_frame: Callable | None = None,
+        on_result: Callable | None = None,
+        on_error: Callable | None = None,
     ):
         """Initialize runtime worker.
 
@@ -70,7 +69,7 @@ class LPRRuntimeWorker:
         )
 
         self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._running = False
         self._last_inference = 0.0
 
@@ -124,7 +123,6 @@ class LPRRuntimeWorker:
         logger.info("=" * 70)
 
         while not self._stop_event.is_set():
-            cap = None
 
             try:
                 # Connect to camera

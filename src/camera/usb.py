@@ -1,12 +1,11 @@
 """USB/Webcam camera implementation."""
 
 import logging
-from typing import Optional
+
 import cv2
 import numpy as np
 
 from .base import CameraBase
-
 
 logger = logging.getLogger("lpr.camera.usb")
 
@@ -33,7 +32,7 @@ class USBCamera(CameraBase):
         self._width = width
         self._height = height
         self._buffer_size = buffer_size
-        self._cap: Optional[cv2.VideoCapture] = None
+        self._cap: cv2.VideoCapture | None = None
         self._resolution: tuple[int, int] | None = None
 
     @property
@@ -80,7 +79,7 @@ class USBCamera(CameraBase):
             self._cap = None
             logger.info("USB camera disconnected")
 
-    def read(self) -> Optional[np.ndarray]:
+    def read(self) -> np.ndarray | None:
         """Read a frame from camera."""
         if not self.is_connected():
             return None

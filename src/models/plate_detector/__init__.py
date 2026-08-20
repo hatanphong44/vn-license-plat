@@ -7,11 +7,11 @@ Responsibilities (per PLAN.md):
 
 import logging
 from typing import Protocol
+
 import numpy as np
 from ultralytics import YOLO
 
 from src.domain.models import PlateDetection
-
 
 logger = logging.getLogger("lpr.models.plate_detector")
 
@@ -91,7 +91,7 @@ class YOLOPlateDetector:
         classes = result.boxes.cls.detach().cpu().numpy()
 
         detections = []
-        for box, score, cls in zip(boxes, scores, classes):
+        for box, score, cls in zip(boxes, scores, classes, strict=False):
             x1, y1, x2, y2 = map(int, box)
             detections.append(PlateDetection(
                 box=[x1, y1, x2, y2],

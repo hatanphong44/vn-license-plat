@@ -1,14 +1,11 @@
 """Observability - Metrics collection."""
 
 import logging
-import time
-from dataclasses import dataclass, field
-from collections import defaultdict
-from typing import Optional
 import threading
+import time
+from dataclasses import dataclass
 
 from src.domain.models import LPRResult
-
 
 logger = logging.getLogger("lpr.observability.metrics")
 
@@ -39,7 +36,7 @@ class RuntimeMetrics:
 
     # Plate tracking
     unique_plates: int = 0
-    last_plate: Optional[str] = None
+    last_plate: str | None = None
 
     def get_fps(self) -> float:
         """Get current FPS."""
@@ -145,7 +142,7 @@ class MetricsCollector:
 
 
 # Global metrics collector
-_metrics: Optional[MetricsCollector] = None
+_metrics: MetricsCollector | None = None
 
 
 def get_metrics_collector() -> MetricsCollector:

@@ -1,8 +1,8 @@
 """API package."""
 
-from .server import create_app, app
+from .server import app, create_app
 
 __all__ = [
-    "create_app",
     "app",
+    "create_app",
 ]

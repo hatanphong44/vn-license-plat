@@ -6,9 +6,8 @@ Responsibilities (per PLAN.md):
 """
 
 import abc
-from typing import Optional
 
-from src.domain.models import PlateEvent, CapturedPlate
+from src.domain.models import CapturedPlate, PlateEvent
 
 
 class EventPublisher(abc.ABC):

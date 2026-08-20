@@ -5,15 +5,15 @@ Responsibilities (per PLAN.md):
 - No camera, HTTP, FastAPI, Docker, or DB logic
 """
 
-import os
 import json
 import logging
+import os
 from typing import Protocol
+
 import numpy as np
 from paddleocr import TextDetection
 
 from src.domain.models import TextDetection as DomainTextDetection
-
 
 logger = logging.getLogger("lpr.models.text_detector")
 
@@ -100,7 +100,7 @@ class PaddleTextDetector:
         scores = data.get("dt_scores", [])
 
         detections = []
-        for poly, score in zip(polygons, scores):
+        for poly, score in zip(polygons, scores, strict=False):
             polygon = np.asarray(poly, dtype=np.float32)
             detections.append(DomainTextDetection.from_polygon_score(polygon, score))
 

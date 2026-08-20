@@ -12,27 +12,27 @@ from .plate_detector import (
     create_plate_detector,
 )
 from .text_detector import (
-    TextDetectorBase,
     PaddleTextDetector,
+    TextDetectorBase,
     create_text_detector,
 )
 from .text_recognizer import (
-    TextRecognizerBase,
     PaddleTextRecognizer,
+    TextRecognizerBase,
     create_text_recognizer,
 )
 
 __all__ = [
+    "PaddleTextDetector",
+    "PaddleTextRecognizer",
     # Plate detector
     "PlateDetectorBase",
-    "YOLOPlateDetector",
-    "create_plate_detector",
     # Text detector
     "TextDetectorBase",
-    "PaddleTextDetector",
-    "create_text_detector",
     # Text recognizer
     "TextRecognizerBase",
-    "PaddleTextRecognizer",
+    "YOLOPlateDetector",
+    "create_plate_detector",
+    "create_text_detector",
     "create_text_recognizer",
 ]

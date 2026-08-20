@@ -5,16 +5,16 @@ Responsibilities (per PLAN.md):
 - Run in separate thread
 """
 
+import contextlib
 import logging
-import threading
 import queue
-from typing import Optional
+import threading
+
 import cv2
 import numpy as np
 
 from src.domain.models import LPRResult
 from src.visualization.annotator import ResultAnnotator
-
 
 logger = logging.getLogger("lpr.visualization.overlay")
 
@@ -27,7 +27,7 @@ class OverlayRenderer:
 
     def __init__(
         self,
-        annotator: Optional[ResultAnnotator] = None,
+        annotator: ResultAnnotator | None = None,
         display_fps: bool = True,
         window_name: str = "LPR Runtime",
     ):
@@ -46,7 +46,7 @@ class OverlayRenderer:
         self._results: list[LPRResult] = []
         self._fps: float = 0.0
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
 
     def start(self) -> None:
@@ -89,10 +89,8 @@ class OverlayRenderer:
             self._fps = fps
 
             # Put frame in queue (drop if full)
-            try:
+            with contextlib.suppress(queue.Full):
                 self._frame_queue.put_nowait(frame.copy())
-            except queue.Full:
-                pass
 
     def push_frame(self, frame: np.ndarray) -> None:
         """Push a frame for display (non-blocking).
@@ -100,10 +98,8 @@ class OverlayRenderer:
         Args:
             frame: Frame to display
         """
-        try:
+        with contextlib.suppress(queue.Full):
             self._frame_queue.put_nowait(frame.copy())
-        except queue.Full:
-            pass
 
     def _render_loop(self) -> None:
         """Render loop (runs in separate thread)."""

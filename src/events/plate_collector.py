@@ -8,15 +8,12 @@ Responsibilities (per PLAN.md):
 
 import logging
 import time
-from collections import Counter
-from typing import Optional
 
 from src.domain.models import (
     CapturedPlate,
-    PlateCollection,
     LPRResult,
+    PlateCollection,
 )
-
 
 logger = logging.getLogger("lpr.events.plate_collector")
 
@@ -54,7 +51,7 @@ class PlateCollector:
     def add_detection(
         self,
         result: LPRResult,
-        frame: Optional[object] = None,
+        frame: object | None = None,
     ) -> bool:
         """Add a plate detection to collector.
 
@@ -89,10 +86,7 @@ class PlateCollector:
                     f"frames={collection.size()}/{self.max_frames}")
 
         # Check if complete
-        if self.is_complete(plate_text):
-            return True
-
-        return False
+        return bool(self.is_complete(plate_text))
 
     def get_or_create_collection(self, plate_text: str) -> PlateCollection:
         """Get existing collection or create new one.
@@ -114,7 +108,7 @@ class PlateCollector:
 
         return self._collections[plate_text]
 
-    def get_collection(self, plate_text: str) -> Optional[PlateCollection]:
+    def get_collection(self, plate_text: str) -> PlateCollection | None:
         """Get collection for plate.
 
         Args:
@@ -143,10 +137,7 @@ class PlateCollector:
             return True
 
         # Check timeout
-        if collection.should_timeout(self.max_wait_seconds):
-            return True
-
-        return False
+        return bool(collection.should_timeout(self.max_wait_seconds))
 
     def is_in_cooldown(self, plate_text: str) -> bool:
         """Check if plate is in cooldown.
@@ -163,7 +154,7 @@ class PlateCollector:
         elapsed = time.time() - self._cooldowns[plate_text]
         return elapsed < self.cooldown_seconds
 
-    def get_best_result(self, plate_text: str) -> Optional[CapturedPlate]:
+    def get_best_result(self, plate_text: str) -> CapturedPlate | None:
         """Get best result from collection.
 
         Args:
@@ -204,10 +195,7 @@ class PlateCollector:
             return False
 
         # Already collecting this plate
-        if plate_text in self._collections:
-            return False
-
-        return True
+        return plate_text not in self._collections
 
     def mark_sent(self, plate_text: str) -> None:
         """Mark plate as sent, starting cooldown.
@@ -220,7 +208,7 @@ class PlateCollector:
         # Clean up old cooldowns
         self._cleanup_cooldowns()
 
-    def clear(self, plate_text: Optional[str] = None) -> None:
+    def clear(self, plate_text: str | None = None) -> None:
         """Clear collections.
 
         Args:
@@ -316,7 +304,7 @@ class MultiPlateCollector:
 
         return completed
 
-    def get_best_result(self, plate_text: str) -> Optional[CapturedPlate]:
+    def get_best_result(self, plate_text: str) -> CapturedPlate | None:
         """Get best result for plate."""
         return self.collector.get_best_result(plate_text)
 

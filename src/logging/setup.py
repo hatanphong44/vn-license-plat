@@ -6,14 +6,14 @@ No external dependencies (no Logstash, no ELK).
 
 import logging
 import sys
-from datetime import datetime
-from typing import Optional
+from datetime import UTC, datetime
+from typing import ClassVar
 
 
 class ColoredFormatter(logging.Formatter):
     """Colored formatter for console output."""
 
-    COLORS = {
+    COLORS: ClassVar[dict[str, str]] = {
         "DEBUG": "\033[36m",    # Cyan
         "INFO": "\033[32m",     # Green
         "WARNING": "\033[33m",  # Yellow
@@ -37,7 +37,7 @@ class TimestampFormatter(logging.Formatter):
     """Formatter with HH:MM:SS timestamp prefix."""
 
     def format(self, record: logging.LogRecord) -> str:
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        timestamp = datetime.now(UTC).strftime("%H:%M:%S")
         record.msg = f"{timestamp} [{record.levelname}] {record.msg}"
         return super().format(record)
 
@@ -84,7 +84,7 @@ def setup_logging(
     return root_logger
 
 
-def get_logger(name: Optional[str] = None) -> logging.Logger:
+def get_logger(name: str | None = None) -> logging.Logger:
     """Get logger instance.
 
     Args:

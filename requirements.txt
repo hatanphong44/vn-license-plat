@@ -50,7 +50,9 @@ pydantic-settings>=2.0.0
 python-multipart>=0.0.6
 
 # ============================================================
-# Testing
+# Testing & Linting
 # ============================================================
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+ruff>=0.1.0

@@ -6,7 +6,7 @@ Responsibilities (per PLAN.md):
 """
 
 import logging
-from typing import Optional
+
 import numpy as np
 
 from src.domain.models import (
@@ -20,9 +20,8 @@ from src.models import (
     TextDetectorBase,
     TextRecognizerBase,
 )
-from src.pipeline.cropper import PlateCropper, TextCropper, PlatePreprocessor
+from src.pipeline.cropper import PlateCropper, PlatePreprocessor, TextCropper
 from src.pipeline.postprocessor import LPRPostProcessor
-
 
 logger = logging.getLogger("lpr.pipeline")
 
@@ -114,7 +113,7 @@ class LPRPipeline:
         detection: PlateDetection,
         plate_idx: int,
         include_frame: bool = False,
-    ) -> Optional[LPRResult]:
+    ) -> LPRResult | None:
         """Process a single plate detection.
 
         Args:
@@ -207,7 +206,7 @@ class LPRPipeline:
 
         # Attach metadata
         results = []
-        for meta, rec in zip(metadata, recognitions):
+        for meta, rec in zip(metadata, recognitions, strict=False):
             rec.line = meta["line"]
             rec.det_score = meta["det_score"]
             rec.polygon = meta["polygon"]
@@ -221,7 +220,7 @@ class LPRPipeline:
     def process_single_plate(
         self,
         plate_crop: np.ndarray,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Process a single cropped plate image.
 
         Useful for testing or processing pre-cropped plates.
@@ -255,7 +254,7 @@ def create_pipeline(
     plate_detector: PlateDetectorBase,
     text_detector: TextDetectorBase,
     text_recognizer: TextRecognizerBase,
-    config: Optional[dict] = None,
+    config: dict | None = None,
 ) -> LPRPipeline:
     """Factory function to create LPR pipeline.
 

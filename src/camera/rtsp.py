@@ -2,12 +2,11 @@
 
 import logging
 import time
-from typing import Optional
+
 import cv2
 import numpy as np
 
 from .base import CameraBase
-
 
 logger = logging.getLogger("lpr.camera.rtsp")
 
@@ -34,7 +33,7 @@ class RTSPCamera(CameraBase):
         self._buffer_size = buffer_size
         self._timeout = timeout
         self._reconnect_delay = reconnect_delay
-        self._cap: Optional[cv2.VideoCapture] = None
+        self._cap: cv2.VideoCapture | None = None
         self._resolution: tuple[int, int] | None = None
         self._last_reconnect: float = 0
 
@@ -86,7 +85,7 @@ class RTSPCamera(CameraBase):
             self._cap = None
             logger.info("RTSP camera disconnected")
 
-    def read(self) -> Optional[np.ndarray]:
+    def read(self) -> np.ndarray | None:
         """Read a frame from camera."""
         if not self.is_connected():
             # Attempt reconnection

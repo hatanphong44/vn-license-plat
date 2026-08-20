@@ -1,7 +1,7 @@
 """Visualization state management."""
 
 from dataclasses import dataclass, field
-from typing import Optional
+
 import numpy as np
 
 from src.domain.models import LPRResult
@@ -11,7 +11,7 @@ from src.domain.models import LPRResult
 class VisualizationState:
     """State container for visualization."""
 
-    current_frame: Optional[np.ndarray] = None
+    current_frame: np.ndarray | None = None
     results: list[LPRResult] = field(default_factory=list)
     fps: float = 0.0
     frame_count: int = 0

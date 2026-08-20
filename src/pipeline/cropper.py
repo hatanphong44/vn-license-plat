@@ -7,12 +7,11 @@ Responsibilities (per PLAN.md):
 """
 
 import logging
-from typing import Optional
+
 import cv2
 import numpy as np
 
 from src.domain.models import PlateDetection, TextDetection
-
 
 logger = logging.getLogger("lpr.pipeline.cropper")
 
@@ -32,7 +31,7 @@ class PlateCropper:
         self,
         frame: np.ndarray,
         detection: PlateDetection,
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray | None:
         """Crop plate region from frame.
 
         Args:
@@ -64,7 +63,7 @@ class PlateCropper:
         self,
         frame: np.ndarray,
         box: list[int],
-    ) -> Optional[tuple[np.ndarray, list[int]]]:
+    ) -> tuple[np.ndarray, list[int]] | None:
         """Crop region and return with crop coordinates.
 
         Args:
@@ -112,7 +111,7 @@ class TextCropper:
         self,
         plate: np.ndarray,
         detection: TextDetection,
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray | None:
         """Crop text region from plate.
 
         Args:
@@ -156,7 +155,7 @@ class TextCropper:
         self,
         image: np.ndarray,
         polygon: np.ndarray,
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray | None:
         """Crop arbitrary polygon region from image.
 
         Args:
@@ -255,12 +254,12 @@ class PlatePreprocessor:
         """
         # Convert to LAB color space
         lab = cv2.cvtColor(plate, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
+        l_channel, a, b = cv2.split(lab)
 
         # Apply CLAHE to L channel
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        l = clahe.apply(l)
+        l_channel = clahe.apply(l_channel)
 
         # Merge channels
-        lab = cv2.merge([l, a, b])
+        lab = cv2.merge([l_channel, a, b])
         return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)

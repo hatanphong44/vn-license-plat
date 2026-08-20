@@ -4,10 +4,10 @@ Following PLAN.md: all configuration via environment variables.
 No hard-coded values for model paths, camera URLs, GPU, confidence/IoU, etc.
 """
 
-import os
 from typing import Literal
-from pydantic_settings import BaseSettings
+
 from pydantic import Field
+from pydantic_settings import BaseSettings
 
 
 class ModelSettings(BaseSettings):

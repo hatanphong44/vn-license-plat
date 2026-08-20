@@ -1,11 +1,11 @@
 """Runtime package."""
 
-from .worker import LPRRuntimeWorker, WorkerConfig
 from .controller import RuntimeController, get_controller
+from .worker import LPRRuntimeWorker, WorkerConfig
 
 __all__ = [
     "LPRRuntimeWorker",
-    "WorkerConfig",
     "RuntimeController",
+    "WorkerConfig",
     "get_controller",
 ]

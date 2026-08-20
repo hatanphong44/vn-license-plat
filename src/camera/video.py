@@ -1,12 +1,11 @@
 """Video file camera implementation (for testing)."""
 
 import logging
-from typing import Optional
+
 import cv2
 import numpy as np
 
 from .base import CameraBase
-
 
 logger = logging.getLogger("lpr.camera.video")
 
@@ -27,7 +26,7 @@ class VideoFileCamera(CameraBase):
         """
         self._video_path = video_path
         self._loop = loop
-        self._cap: Optional[cv2.VideoCapture] = None
+        self._cap: cv2.VideoCapture | None = None
         self._resolution: tuple[int, int] | None = None
         self._frame_count: int = 0
         self._total_frames: int = 0
@@ -86,7 +85,7 @@ class VideoFileCamera(CameraBase):
             self._cap = None
             logger.info("Video file closed")
 
-    def read(self) -> Optional[np.ndarray]:
+    def read(self) -> np.ndarray | None:
         """Read a frame from video."""
         if not self.is_connected():
             return None

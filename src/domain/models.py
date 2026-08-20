@@ -6,8 +6,8 @@ CapturedPlate, PlateCollection, PlateEvent.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Optional
+from datetime import UTC, datetime
+
 import numpy as np
 
 
@@ -58,7 +58,7 @@ class LPRResult:
     yolo_score: float
     class_name: str
     ocr_results: list[TextRecognition]
-    frame: Optional[np.ndarray] = None  # Optional: full frame where detected
+    frame: np.ndarray | None = None  # Optional: full frame where detected
 
     def has_text(self) -> bool:
         """Check if plate has valid text."""
@@ -81,8 +81,8 @@ class CapturedPlate:
     yolo_score: float
     box: list[int]
     ocr_results: list[TextRecognition]
-    frame: Optional[np.ndarray] = None
-    timestamp: datetime = field(default_factory=datetime.now)
+    frame: np.ndarray | None = None
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
@@ -91,7 +91,7 @@ class PlateCollection:
     plate_number: str  # normalized plate number
     captures: list[CapturedPlate] = field(default_factory=list)
     max_frames: int = 20
-    start_time: datetime = field(default_factory=datetime.now)
+    start_time: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def add(self, capture: CapturedPlate) -> None:
         """Add a capture to collection if not full."""
@@ -108,7 +108,7 @@ class PlateCollection:
 
     def should_timeout(self, max_wait_seconds: float) -> bool:
         """Check if collection timed out waiting for more frames."""
-        elapsed = (datetime.now() - self.start_time).total_seconds()
+        elapsed = (datetime.now(UTC) - self.start_time).total_seconds()
         return elapsed >= max_wait_seconds
 
     def get_text_counts(self) -> dict[str, int]:
@@ -116,7 +116,7 @@ class PlateCollection:
         from collections import Counter
         return Counter(c.plate_normalized for c in self.captures)
 
-    def get_best_result(self) -> Optional[CapturedPlate]:
+    def get_best_result(self) -> CapturedPlate | None:
         """Get the best result using majority vote + confidence scoring."""
         if not self.captures:
             return None
@@ -165,7 +165,7 @@ class PlateEvent:
     def from_result(cls, result: CapturedPlate, camera: str, frames_count: int) -> "PlateEvent":
         """Create event from best LPR result."""
         return cls(
-            timestamp=datetime.now().isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             camera=str(camera),
             plate=result.plate,
             plate_normalized=result.plate_normalized,

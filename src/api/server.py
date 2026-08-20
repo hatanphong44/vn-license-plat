@@ -7,24 +7,22 @@ Responsibilities (per PLAN.md):
 
 import logging
 import time
-from typing import Optional
-from datetime import datetime
+from datetime import UTC, datetime
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Response
-from fastapi.middleware.cors import CORSMiddleware
-import numpy as np
 import cv2
+import numpy as np
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 
-from src.runtime.controller import RuntimeController, get_controller
 from src.pipeline.lpr_pipeline import LPRPipeline
-
+from src.runtime.controller import RuntimeController, get_controller
 
 logger = logging.getLogger("lpr.api")
 
 
 def create_app(
-    controller: Optional[RuntimeController] = None,
-    pipeline: Optional[LPRPipeline] = None,
+    controller: RuntimeController | None = None,
+    pipeline: LPRPipeline | None = None,
 ) -> FastAPI:
     """Create FastAPI application.
 
@@ -69,7 +67,7 @@ def register_routes(app: FastAPI) -> None:
         """Health check endpoint."""
         return {
             "status": "ok",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
     @app.get("/ready")
@@ -110,7 +108,7 @@ def register_routes(app: FastAPI) -> None:
         }
 
     @app.post("/predict")
-    async def predict(file: UploadFile = File(...)):
+    async def predict(file: UploadFile = File(...)):  # noqa: B008
         """Manual single-image test endpoint."""
         pipeline = app.state.pipeline
 

@@ -7,25 +7,22 @@ Usage:
 
 import os
 import sys
-import logging
-from typing import Optional
 
 # Add src to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.config import get_settings, Settings
-from src.logging import setup_logging, get_logger
+from src.api import create_app
+from src.camera import create_camera
+from src.config import Settings, get_settings
+from src.events import create_http_publisher
+from src.logging import get_logger, setup_logging
 from src.models import (
     create_plate_detector,
     create_text_detector,
     create_text_recognizer,
 )
-from src.camera import create_camera
-from src.pipeline.lpr_pipeline import LPRPipeline, create_pipeline
-from src.events import create_http_publisher
-from src.runtime import LPRRuntimeWorker, WorkerConfig, get_controller
-from src.api import create_app
-from src.visualization import create_overlay_renderer
+from src.pipeline.lpr_pipeline import create_pipeline
+from src.runtime import LPRRuntimeWorker, WorkerConfig
 
 
 def load_models(settings: Settings) -> tuple:
@@ -84,7 +81,7 @@ def create_runtime(
     Returns:
         Configured runtime worker
     """
-    logger = get_logger("main")
+    get_logger("main")
 
     # Create pipeline
     pipeline = create_pipeline(
@@ -125,14 +122,13 @@ def create_runtime(
     )
 
     # Create runtime worker
-    worker = LPRRuntimeWorker(
+    return LPRRuntimeWorker(
         camera=camera,
         pipeline=pipeline,
         publisher=publisher,
         config=worker_config,
     )
 
-    return worker
 
 
 def run_runtime():

@@ -8,11 +8,8 @@ Responsibilities (per PLAN.md):
 
 import logging
 import re
-from typing import Optional
-import numpy as np
 
-from src.domain.models import TextRecognition, LPRResult
-
+from src.domain.models import LPRResult, TextRecognition
 
 logger = logging.getLogger("lpr.pipeline.postprocessor")
 
@@ -155,7 +152,7 @@ class LPRPostProcessor:
         self.normalizer = TextNormalizer(min_length, max_length)
         self.concatenator = MultiLineConcatenator()
 
-    def process(self, ocr_results: list[TextRecognition]) -> Optional[str]:
+    def process(self, ocr_results: list[TextRecognition]) -> str | None:
         """Process OCR results to get final plate text.
 
         Args:
@@ -183,7 +180,7 @@ class LPRPostProcessor:
 
         return normalized
 
-    def process_result(self, result: LPRResult) -> Optional[str]:
+    def process_result(self, result: LPRResult) -> str | None:
         """Process LPRResult to get final plate text.
 
         Args:

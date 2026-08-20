@@ -5,12 +5,11 @@ Publishes plate events to HTTP endpoint.
 
 import logging
 import time
-from typing import Optional
+
 import requests
 
-from src.events.publisher import EventPublisher
 from src.domain.models import PlateEvent
-
+from src.events.publisher import EventPublisher
 
 logger = logging.getLogger("lpr.events.http_publisher")
 
@@ -24,7 +23,7 @@ class HTTPEventPublisher(EventPublisher):
         timeout: float = 5.0,
         retry_count: int = 3,
         retry_delay: float = 1.0,
-        headers: Optional[dict] = None,
+        headers: dict | None = None,
     ):
         """Initialize HTTP publisher.
 
