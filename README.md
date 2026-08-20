@@ -84,14 +84,14 @@ python -m src.test_image \
     --visualize
 ```
 
-### 4. Test on Video
+### 4. Test on Camera
 
 ```bash
-# Test on video file
-python scripts/test_models.py --video path/to/video.mp4 --output result.mp4
-
-# Test on camera
+# Test on camera (default device 0)
 python scripts/test_models.py --camera
+
+# Test on specific camera device
+python scripts/test_models.py --camera --camera-id 1
 
 # Test single image
 python scripts/test_models.py --image path/to/image.jpg
@@ -200,8 +200,7 @@ lpr-runtime/
 │   ├── camera/               # Camera abstraction
 │   │   ├── base.py           # Base camera interface
 │   │   ├── usb.py            # USB camera
-│   │   ├── rtsp.py           # RTSP camera
-│   │   └── video.py          # Video file
+│   │   └── rtsp.py           # RTSP camera
 │   ├── visualization/        # Overlay rendering
 │   ├── domain/               # Domain models
 │   │   └── models.py         # Typed objects (LPRResult, etc.)
@@ -209,7 +208,7 @@ lpr-runtime/
 │   │   └── settings.py       # Pydantic settings
 │   └── logging/              # Logging setup
 ├── scripts/
-│   └── test_models.py       # Video/image model testing
+│   └── test_models.py       # Camera/image model testing
 ├── tests/                    # Unit/integration tests
 ├── models/                   # Model weights (gitignored)
 ├── configs/                  # Configuration files

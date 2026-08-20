@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """
-Test Models Script - Video-based model testing tool.
+Test Models Script - Camera-based model testing tool.
 
 Usage:
-    python scripts/test_models.py --video path/to/video.mp4 --output result.mp4
-    python scripts/test_models.py --video path/to/video.mp4
-    python scripts/test_models.py  # Uses camera if no video specified
+    python scripts/test_models.py --camera
+    python scripts/test_models.py --camera --camera-id 0
+    python scripts/test_models.py --image path/to/image.jpg
 
 Features:
     Stage 1: YOLO plate detection - green boxes around plates
     Stage 2: OCR text detection - blue boxes around text regions
     Stage 3: OCR text recognition - red text overlaid on plates
     Overlay: Show each stage result on the frame for debugging
-    Save: Optional output video with all annotations
-    Stats: Print timing per stage and total FPS
+    Stats: Print timing per frame and total FPS
 """
 
 import argparse
@@ -674,123 +673,23 @@ def process_image(image_path, plate_model, det_model, rec_model, visualize=True)
     return all_results
 
 
-def process_video(video_path, output_path, plate_model, det_model, rec_model):
-    """Process video file.
-
-    Args:
-        video_path: Path to input video
-        output_path: Path to save output video (optional)
-        plate_model: YOLO plate model
-        det_model: PaddleOCR text detector
-        rec_model: PaddleOCR text recognizer
-    """
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {video_path}")
-
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-
-    print(f"\nVideo: {width}x{height} @ {fps} FPS")
-
-    writer = None
-    if output_path:
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-        print(f"Output will be saved to: {output_path}")
-
-    frame_count = 0
-    total_plates = 0
-
-    print("\n" + "=" * 70)
-    print("PROCESSING VIDEO")
-    print("=" * 70)
-
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-
-        frame_count += 1
-
-        # Detect plates
-        plates = detect_plates(frame, plate_model, visualize=False)
-
-        for plate_det in plates:
-            x1, y1, x2, y2 = plate_det["box"]
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
-
-            # Crop and OCR
-            plate = crop_plate(frame, plate_det['box'], padding=0.05)
-            if plate is not None:
-                plate_up, detections = detect_text(plate, det_model, visualize=False)
-
-                if detections:
-                    # Crop and recognize
-                    crops = []
-                    metadata = []
-                    for item in detections:
-                        crop = crop_polygon(plate_up, item["polygon"], padding=TEXT_PADDING)
-                        if crop is not None:
-                            crop = cv2.copyMakeBorder(crop, 10, 10, 10, 10,
-                                                      cv2.BORDER_CONSTANT, value=(255, 255, 255))
-                            crops.append(crop)
-                            metadata.append(item)
-
-                    if crops:
-                        results = recognize_text(crops, rec_model)
-                        for meta, rec in zip(metadata, results, strict=True):
-                            if rec["text"]:
-                                # Draw text on frame
-                                text_x = x1 + int(np.min(meta["polygon"][:, 0]) / OCR_UPSCALE)
-                                text_y = y2
-                                cv2.putText(frame, rec["text"], (text_x, text_y),
-                                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                                total_plates += 1
-
-        # Add frame info
-        cv2.putText(frame, f"Frame: {frame_count}", (10, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(frame, f"Plates: {len(plates)}", (10, 60),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-        if writer:
-            writer.write(frame)
-
-        # Display
-        cv2.imshow("LPR Test", frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cap.release()
-    if writer:
-        writer.release()
-    cv2.destroyAllWindows()
-
-    print("\n" + "=" * 70)
-    print("VIDEO PROCESSING COMPLETE")
-    print("=" * 70)
-    print(f"Total frames: {frame_count}")
-    print(f"Total plates detected: {total_plates}")
-    print(f"Average plates/frame: {total_plates / max(frame_count, 1):.2f}")
 
 
-def process_camera(plate_model, det_model, rec_model):
+def process_camera(plate_model, det_model, rec_model, camera_id=0):
     """Process camera feed.
 
     Args:
         plate_model: YOLO plate model
         det_model: PaddleOCR text detector
         rec_model: PaddleOCR text recognizer
+        camera_id: Camera device ID (default: 0)
     """
-    camera_source = int(os.getenv("CAMERA_SOURCE", "0"))
-    cap = cv2.VideoCapture(camera_source)
+    cap = cv2.VideoCapture(camera_id)
 
     if not cap.isOpened():
-        raise RuntimeError(f"Cannot open camera: {camera_source}")
+        raise RuntimeError(f"Cannot open camera: {camera_id}")
 
-    print(f"\nCamera opened: {camera_source}")
+    print(f"\nCamera opened: {camera_id}")
 
     frame_count = 0
 
@@ -854,10 +753,9 @@ def process_camera(plate_model, det_model, rec_model):
 
 def main():
     parser = argparse.ArgumentParser(description="LPR Model Testing Tool")
-    parser.add_argument("--video", type=str, help="Path to test video")
-    parser.add_argument("--output", type=str, help="Path to save output video")
     parser.add_argument("--image", type=str, help="Path to test image")
     parser.add_argument("--camera", action="store_true", help="Use camera")
+    parser.add_argument("--camera-id", type=int, default=0, help="Camera device ID (default: 0)")
     parser.add_argument("--no-visualize", action="store_true", help="Disable visualizations")
     parser.add_argument("--yolo-model", type=str, default=DEFAULT_YOLO_MODEL_PATH,
                        help="Path to YOLO model")
@@ -882,10 +780,8 @@ def main():
     # Process based on input type
     if args.image:
         process_image(args.image, plate_model, det_model, rec_model, visualize=visualize)
-    elif args.video:
-        process_video(args.video, args.output, plate_model, det_model, rec_model)
     elif args.camera:
-        process_camera(plate_model, det_model, rec_model)
+        process_camera(plate_model, det_model, rec_model, camera_id=args.camera_id)
     else:
         # Try to find test image
         test_image = os.path.join(DEFAULT_IMG_DIR, "CarLongPlate0_jpg.rf.e861e8ff15501637fc82e10ffb5299c0.jpg")
@@ -894,8 +790,8 @@ def main():
         else:
             print("\nNo input specified. Available options:")
             print("  --image <path>    Process single image")
-            print("  --video <path>     Process video file")
             print("  --camera           Use camera feed")
+            print("  --camera-id <id>   Camera device ID (default: 0)")
             print("\nOr specify path to test image:")
             print(f"  python scripts/test_models.py --image {test_image}")
 

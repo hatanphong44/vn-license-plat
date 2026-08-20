@@ -314,11 +314,13 @@ Mock models/external services for unit tests. Test real inference separately.
 
 ## Model Testing Mode
 
-Run inference on a video file to visually verify all 3 models work correctly.
+Run inference on camera feed or single image to visually verify all 3 models work correctly.
 
 ### Usage
 ```bash
-python test_models.py --video path/to/video.mp4 --output result.mp4
+python scripts/test_models.py --camera
+python scripts/test_models.py --camera --camera-id 1
+python scripts/test_models.py --image path/to/image.jpg
 ```
 
 ### Features
@@ -326,13 +328,11 @@ python test_models.py --video path/to/video.mp4 --output result.mp4
 - **Stage 2:** OCR text detection — blue boxes around text regions
 - **Stage 3:** OCR text recognition — red text overlaid on plates
 - **Overlay:** Show each stage result on the frame for debugging
-- **Save:** Optional output video with all annotations
-- **Stats:** Print timing per stage and total FPS
+- **Stats:** Print timing per frame and total FPS
 
 ### Configuration
 ```python
-TEST_VIDEO=None           # Path to test video (None = use camera)
-TEST_OUTPUT=None          # Path to save output video
+TEST_IMAGE=None           # Path to test image
 TEST_SHOW_STAGES=True     # Show intermediate results
 TEST_SAVE_FRAME=False     # Save best frames to disk
 ```
@@ -347,18 +347,18 @@ pip install -q -U ultralytics
 # 2. Verify GPU
 python -c "import paddle; print(paddle.device.is_compiled_with_cuda())"
 
-# 3. Chạy test models trên video
-python scripts/test_models.py --video path/to/video.mp4 --output result.mp4
+# 3. Test với camera trực tiếp
+python scripts/test_models.py --camera
 
-# 4. Hoặc test với camera trực tiếp
-python scripts/test_models.py
+# 4. Hoặc test với ảnh
+python scripts/test_models.py --image path/to/image.jpg
 ```
 
 ### Interface
 ```python
 class ModelTester:
     def load_models(self) -> None
-    def run_on_video(self, video_path: str, output_path: str = None) -> None
+    def run_on_camera(self, camera_id: int = 0) -> None
     def show_stage(self, stage: int, frame, detections) -> None
 ```
 

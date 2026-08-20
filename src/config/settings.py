@@ -60,13 +60,9 @@ class ModelSettings(BaseSettings):
     )
 
     # Model test mode
-    TEST_VIDEO: str | None = Field(
+    TEST_IMAGE: str | None = Field(
         default=None,
-        description="Path to test video (None = use camera)"
-    )
-    TEST_OUTPUT: str | None = Field(
-        default=None,
-        description="Path to save output video"
+        description="Path to test image"
     )
     TEST_SHOW_STAGES: bool = Field(
         default=True,

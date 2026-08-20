@@ -8,7 +8,6 @@ import logging
 from .base import CameraBase
 from .rtsp import RTSPCamera
 from .usb import USBCamera
-from .video import VideoFileCamera
 
 logger = logging.getLogger("lpr.camera")
 
@@ -22,7 +21,7 @@ def create_camera(
     """Create appropriate camera instance based on source.
 
     Args:
-        source: Camera source (0, 1 for USB, or RTSP URL, or video path)
+        source: Camera source (0, 1 for USB, or RTSP URL)
         buffer_size: Capture buffer size
         timeout: Connection timeout for network cameras
         reconnect_delay: Delay before reconnecting
@@ -56,14 +55,6 @@ def create_camera(
             reconnect_delay=reconnect_delay,
         )
 
-    # Check if it's a video file
-    if source_str.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".flv")):
-        logger.info("Creating video file camera")
-        return VideoFileCamera(
-            video_path=source_str,
-            loop=True,
-        )
-
     # Default to RTSP (might be a path without extension)
     logger.info("Creating RTSP camera as default")
     return RTSPCamera(
@@ -78,6 +69,5 @@ __all__ = [
     "CameraBase",
     "RTSPCamera",
     "USBCamera",
-    "VideoFileCamera",
     "create_camera",
 ]
