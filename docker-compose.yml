@@ -1,0 +1,87 @@
+# LPR Runtime Docker Compose
+# 24/7 LPR inference runtime with GPU support
+
+version: '3.8'
+
+services:
+  lpr-runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lpr-runtime
+    restart: unless-stopped
+    runtime: nvidia  # GPU support
+    environment:
+      # Model paths
+      - YOLO_MODEL_PATH=/models/plate_detector/Plate.pt
+      - YOLO_DEVICE=0
+      - PADDLE_DEVICE=gpu:0
+
+      # Model parameters
+      - YOLO_CONF=0.25
+      - YOLO_IOU=0.45
+      - OCR_UPSCALE=4
+      - TEXT_PADDING=10
+      - REC_MIN_SCORE=0.0
+
+      # Camera settings
+      - CAMERA_SOURCE=${CAMERA_SOURCE:-rtsp://192.168.1.100:554/stream}
+      - INFERENCE_FPS=5.0
+      - CAMERA_RECONNECT_DELAY=3
+      - CAMERA_CONNECT_TIMEOUT=10
+      - CAMERA_BUFFER_SIZE=1
+
+      # Runtime settings
+      - PLATE_COOLDOWN_SECONDS=30.0
+      - MAX_CAPTURE_FRAMES=20
+      - MAX_CAPTURE_WAIT_SECONDS=10.0
+
+      # Event publisher
+      - CALLBACK_URL=${CALLBACK_URL:-}
+      - CALLBACK_TIMEOUT=5.0
+      - CALLBACK_RETRY_COUNT=3
+      - CALLBACK_RETRY_DELAY=1.0
+
+      # Visualization
+      - VISUALIZE=false  # Set true for display output
+      - DISPLAY_FPS=true
+      - SHOW_BOX=true
+      - SHOW_TEXT=true
+
+      # Logging
+      - LOG_LEVEL=INFO
+      - DEBUG=false
+
+    volumes:
+      # Mount model weights (should be outside git)
+      - ./models/plate_detector:/models/plate_detector:ro
+      - ./models/text_detector:/models/text_detector:ro
+      - ./models/text_recognizer:/models/text_recognizer:ro
+
+      # Config file (optional)
+      # - ./configs:/app/configs:ro
+
+    ports:
+      - "8000:8000"  # API server
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; r=requests.get('http://localhost:8000/health'); assert r.status_code == 200"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    networks:
+      - lpr-network
+
+networks:
+  lpr-network:
+    driver: bridge
