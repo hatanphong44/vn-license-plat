@@ -6,6 +6,7 @@ Responsibilities (per PLAN.md):
 """
 
 import logging
+import time
 
 import numpy as np
 
@@ -20,6 +21,7 @@ from src.models import (
     TextDetectorBase,
     TextRecognizerBase,
 )
+from src.observability import get_profiler
 from src.pipeline.cropper import PlateCropper, PlatePreprocessor, TextCropper
 from src.pipeline.postprocessor import LPRPostProcessor
 
@@ -48,17 +50,7 @@ class LPRPipeline:
         upscale_factor: int = 4,
         rec_min_score: float = 0.0,
     ):
-        """Initialize LPR pipeline.
-
-        Args:
-            plate_detector: Plate detection model
-            text_detector: Text detection model
-            text_recognizer: Text recognition model
-            plate_padding: Padding ratio around plate boxes
-            text_padding: Padding around text regions
-            upscale_factor: Plate upscale factor for OCR
-            rec_min_score: Minimum recognition score threshold
-        """
+        """Initialize LPR pipeline."""
         self.plate_detector = plate_detector
         self.text_detector = text_detector
         self.text_recognizer = text_recognizer
@@ -84,12 +76,17 @@ class LPRPipeline:
         Returns:
             List of LPR results for detected plates
         """
+        profiler = get_profiler()
         results = []
 
-        # Step 1: Detect plates
+        # Step 1: Detect plates (YOLO)
+        plate_start = time.perf_counter()
         plate_detections = self.plate_detector.detect(frame)
-        logger.debug(f"Frame captured: {frame.shape[1]}x{frame.shape[0]}, "
-                    f"Plates detected: {len(plate_detections)}")
+        yolo_ms = (time.perf_counter() - plate_start) * 1000
+
+        profiler.yolo_call(yolo_ms)
+
+        logger.debug(f"Frame: {frame.shape[1]}x{frame.shape[0]}, Plates: {len(plate_detections)}")
 
         # Step 2-6: Process each plate
         for plate_idx, plate_det in enumerate(plate_detections):
@@ -102,7 +99,7 @@ class LPRPipeline:
 
             if result and result.has_text():
                 results.append(result)
-                logger.debug(f"Detection found: plate={result.plate_normalized} "
+                logger.debug(f"Detection: plate={result.plate_normalized} "
                            f"confidence={result.get_confidence():.3f}")
 
         return results
@@ -114,17 +111,7 @@ class LPRPipeline:
         plate_idx: int,
         include_frame: bool = False,
     ) -> LPRResult | None:
-        """Process a single plate detection.
-
-        Args:
-            frame: Full frame
-            detection: Plate detection result
-            plate_idx: Plate index in frame
-            include_frame: Whether to include frame
-
-        Returns:
-            LPR result, or None if processing failed
-        """
+        """Process a single plate detection."""
         # Step 2: Crop plate
         plate_crop = self.plate_cropper.crop(frame, detection)
         if plate_crop is None:
@@ -134,16 +121,27 @@ class LPRPipeline:
         plate_prep = self.preprocessor.preprocess(plate_crop)
 
         # Step 4: Detect text regions
+        det_start = time.perf_counter()
         text_detections = self.text_detector.detect(plate_prep)
+        det_ms = (time.perf_counter() - det_start) * 1000
+
+        get_profiler().ocr_detection(det_ms)
 
         if not text_detections:
             return None
 
         # Step 5: Crop and recognize text
+        rec_start = time.perf_counter()
         ocr_results = self._recognize_text(plate_prep, text_detections)
+        rec_ms = (time.perf_counter() - rec_start) * 1000
+
+        get_profiler().ocr_recognition(rec_ms)
 
         if not ocr_results:
             return None
+
+        # Log OCR result count
+        get_profiler().ocr_result()
 
         # Step 6: Postprocess
         plate_text = self.postprocessor.process(ocr_results)
@@ -151,7 +149,6 @@ class LPRPipeline:
         if not plate_text:
             return None
 
-        # Normalize raw text for output
         raw_text = self.postprocessor.concatenator.concatenate(ocr_results)
 
         return LPRResult(
@@ -170,15 +167,7 @@ class LPRPipeline:
         plate: np.ndarray,
         text_detections: list[TextDetection],
     ) -> list[TextRecognition]:
-        """Recognize text from plate.
-
-        Args:
-            plate: Preprocessed plate image
-            text_detections: Text region detections
-
-        Returns:
-            List of recognition results
-        """
+        """Recognize text from plate."""
         # Crop text regions
         crops = []
         metadata = []
@@ -221,32 +210,19 @@ class LPRPipeline:
         self,
         plate_crop: np.ndarray,
     ) -> str | None:
-        """Process a single cropped plate image.
-
-        Useful for testing or processing pre-cropped plates.
-
-        Args:
-            plate_crop: Cropped plate image
-
-        Returns:
-            Recognized plate text, or None
-        """
-        # Preprocess
+        """Process a single cropped plate image."""
         plate_prep = self.preprocessor.preprocess(plate_crop)
 
-        # Detect text
         text_detections = self.text_detector.detect(plate_prep)
 
         if not text_detections:
             return None
 
-        # Recognize
         ocr_results = self._recognize_text(plate_prep, text_detections)
 
         if not ocr_results:
             return None
 
-        # Postprocess
         return self.postprocessor.process(ocr_results)
 
 
@@ -256,17 +232,7 @@ def create_pipeline(
     text_recognizer: TextRecognizerBase,
     config: dict | None = None,
 ) -> LPRPipeline:
-    """Factory function to create LPR pipeline.
-
-    Args:
-        plate_detector: Plate detection model
-        text_detector: Text detection model
-        text_recognizer: Text recognition model
-        config: Optional configuration dict
-
-    Returns:
-        Configured LPR pipeline
-    """
+    """Factory function to create LPR pipeline."""
     cfg = config or {}
 
     return LPRPipeline(

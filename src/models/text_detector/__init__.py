@@ -8,6 +8,7 @@ Responsibilities (per PLAN.md):
 import json
 import logging
 import os
+import time
 from typing import Protocol
 
 import numpy as np
@@ -46,19 +47,13 @@ class PaddleTextDetector:
         model_dir: str = "./models",
         device: str = "gpu:0",
     ):
-        """Initialize PaddleOCR text detector.
-
-        Args:
-            model_dir: Base directory containing PP-OCRv6_small_det folder
-            device: Device for inference (gpu:0, gpu:1, cpu)
-        """
+        """Initialize PaddleOCR text detector."""
         self.model_dir = model_dir
         self.device = device
         self._model = None
 
     def load(self) -> None:
         """Load the model into memory."""
-        # model_dir should be the base models directory containing PP-OCRv6_small_det folder
         det_model_dir = os.path.join(self.model_dir, "PP-OCRv6_small_det")
         logger.info(f"Loading PP-OCRv6_small_det from {det_model_dir}...")
         self._model = TextDetection(
@@ -82,8 +77,14 @@ class PaddleTextDetector:
         Returns:
             List of TextDetection results sorted by reading order
         """
+        from src.observability import get_profiler
+
         if not self.is_loaded:
             raise RuntimeError("Model not loaded. Call load() first.")
+
+        profiler = get_profiler()
+
+        inf_start = time.perf_counter()
 
         det_results = list(
             self._model.predict(
@@ -91,6 +92,11 @@ class PaddleTextDetector:
                 batch_size=1,
             )
         )
+
+        inf_ms = (time.perf_counter() - inf_start) * 1000
+
+        if profiler.enabled:
+            profiler.ocr_detection(inf_ms)
 
         if not det_results:
             return []
@@ -114,15 +120,7 @@ def create_text_detector(
     model_dir: str = "./models",
     device: str = "gpu:0",
 ) -> PaddleTextDetector:
-    """Factory function to create text detector.
-
-    Args:
-        model_dir: Base directory containing model folders
-        device: Device for inference
-
-    Returns:
-        Configured text detector instance
-    """
+    """Factory function to create text detector."""
     detector = PaddleTextDetector(model_dir=model_dir, device=device)
     detector.load()
     return detector

@@ -6,9 +6,11 @@ Responsibilities (per PLAN.md):
 """
 
 import logging
+import time
 from typing import Protocol
 
 import numpy as np
+import torch
 from ultralytics import YOLO
 
 from src.domain.models import PlateDetection
@@ -34,14 +36,7 @@ class YOLOPlateDetector:
         iou: float = 0.45,
         device: str = "0",
     ):
-        """Initialize YOLO plate detector.
-
-        Args:
-            model_path: Path to YOLO model weights
-            conf: Confidence threshold
-            iou: IoU threshold for NMS
-            device: GPU device (0, 1, cpu)
-        """
+        """Initialize YOLO plate detector."""
         self.model_path = model_path
         self.conf = conf
         self.iou = iou
@@ -71,6 +66,15 @@ class YOLOPlateDetector:
         if not self.is_loaded:
             raise RuntimeError("Model not loaded. Call load() first.")
 
+        # Synchronize CUDA if using GPU (for accurate timing in debug mode)
+        from src.observability import get_profiler
+        profiler = get_profiler()
+
+        if profiler.enabled and torch.cuda.is_available() and 'cuda' in str(self.device).lower():
+            torch.cuda.synchronize()
+
+        inf_start = time.perf_counter()
+
         results = self._model.predict(
             source=image,
             conf=self.conf,
@@ -78,6 +82,15 @@ class YOLOPlateDetector:
             device=self.device,
             verbose=False,
         )
+
+        if profiler.enabled and torch.cuda.is_available() and 'cuda' in str(self.device).lower():
+            torch.cuda.synchronize()
+
+        inf_ms = (time.perf_counter() - inf_start) * 1000
+
+        # Record timing via profiler
+        if profiler.enabled:
+            profiler.yolo_call(inf_ms)
 
         if not results:
             return []
@@ -109,17 +122,7 @@ def create_plate_detector(
     iou: float = 0.45,
     device: str = "0",
 ) -> YOLOPlateDetector:
-    """Factory function to create plate detector.
-
-    Args:
-        model_path: Path to YOLO model
-        conf: Confidence threshold
-        iou: IoU threshold
-        device: GPU device
-
-    Returns:
-        Configured plate detector instance
-    """
+    """Factory function to create plate detector."""
     detector = YOLOPlateDetector(
         model_path=model_path,
         conf=conf,

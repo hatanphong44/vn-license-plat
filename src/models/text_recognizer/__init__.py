@@ -8,6 +8,7 @@ Responsibilities (per PLAN.md):
 import json
 import logging
 import os
+import time
 from typing import Protocol
 
 import numpy as np
@@ -46,19 +47,13 @@ class PaddleTextRecognizer:
         model_dir: str = "./models",
         device: str = "gpu:0",
     ):
-        """Initialize PaddleOCR text recognizer.
-
-        Args:
-            model_dir: Base directory containing PP-OCRv6_small_rec folder
-            device: Device for inference (gpu:0, gpu:1, cpu)
-        """
+        """Initialize PaddleOCR text recognizer."""
         self.model_dir = model_dir
         self.device = device
         self._model = None
 
     def load(self) -> None:
         """Load the model into memory."""
-        # model_dir should be the base models directory containing PP-OCRv6_small_rec folder
         rec_model_dir = os.path.join(self.model_dir, "PP-OCRv6_small_rec")
         logger.info(f"Loading PP-OCRv6_small_rec from {rec_model_dir}...")
         self._model = TextRecognition(
@@ -87,11 +82,17 @@ class PaddleTextRecognizer:
         Returns:
             List of TextRecognition results
         """
+        from src.observability import get_profiler
+
         if not self.is_loaded:
             raise RuntimeError("Model not loaded. Call load() first.")
 
+        profiler = get_profiler()
+
         if not images:
             return []
+
+        inf_start = time.perf_counter()
 
         rec_results = list(
             self._model.predict(
@@ -99,6 +100,11 @@ class PaddleTextRecognizer:
                 batch_size=len(images),
             )
         )
+
+        inf_ms = (time.perf_counter() - inf_start) * 1000
+
+        if profiler.enabled:
+            profiler.ocr_recognition(inf_ms)
 
         outputs = []
         for res in rec_results:
@@ -113,10 +119,10 @@ class PaddleTextRecognizer:
             if text and rec_score >= min_score:
                 outputs.append(DomainTextRecognition(
                     text=text,
-                    line=len(outputs),  # Reading order
-                    det_score=0.0,  # Set by text detector
+                    line=len(outputs),
+                    det_score=0.0,
                     rec_score=rec_score,
-                    polygon=[],  # Set by text detector
+                    polygon=[],
                 ))
 
         return outputs
@@ -126,15 +132,7 @@ def create_text_recognizer(
     model_dir: str = "./models",
     device: str = "gpu:0",
 ) -> PaddleTextRecognizer:
-    """Factory function to create text recognizer.
-
-    Args:
-        model_dir: Base directory containing model folders
-        device: Device for inference
-
-    Returns:
-        Configured text recognizer instance
-    """
+    """Factory function to create text recognizer."""
     recognizer = PaddleTextRecognizer(model_dir=model_dir, device=device)
     recognizer.load()
     return recognizer

@@ -53,24 +53,47 @@ class HTTPEventPublisher(EventPublisher):
         Returns:
             True if published successfully
         """
+        from src.observability import get_profiler
+
         if not self.is_available():
             logger.warning("Callback URL not configured")
             return False
+
+        profiler = get_profiler()
+
+        if profiler.enabled:
+            profiler.start_stage("publish")
+            profiler.log("publisher.publish START")
 
         payload = event.to_dict()
 
         for attempt in range(self.retry_count):
             try:
+                if profiler.enabled:
+                    req_start = time.perf_counter()
+
                 response = requests.post(
                     self.url,
                     json=payload,
                     timeout=self.timeout,
                     headers=self.headers,
                 )
+
+                if profiler.enabled:
+                    req_ms = (time.perf_counter() - req_start) * 1000
+                    profiler.log(f"HTTP request: {req_ms:.1f} ms (attempt {attempt + 1})")
+
                 response.raise_for_status()
 
                 logger.info(f"Event published: plate={event.plate_normalized} "
                           f"status={response.status_code}")
+
+                if profiler.enabled:
+                    publish_ms = profiler.end_stage("publish")
+                    profiler.log(f"publisher.publish END: {publish_ms:.1f} ms")
+                    if publish_ms > 500:
+                        profiler.log(f"[SLOW] publish: {publish_ms:.1f} ms", "warning")
+
                 return True
 
             except requests.exceptions.Timeout:
@@ -81,6 +104,8 @@ class HTTPEventPublisher(EventPublisher):
                 logger.error(f"HTTP error: {e}")
                 # Don't retry on 4xx errors
                 if 400 <= e.response.status_code < 500:
+                    if profiler.enabled:
+                        profiler.end_stage("publish")
                     return False
             except Exception as e:
                 logger.error(f"Publish failed: plate={event.plate_normalized} error={e}")
@@ -91,6 +116,10 @@ class HTTPEventPublisher(EventPublisher):
 
         logger.error(f"Publish failed after {self.retry_count} attempts: "
                     f"plate={event.plate_normalized}")
+
+        if profiler.enabled:
+            profiler.end_stage("publish")
+
         return False
 
     def publish_batch(self, events: list[PlateEvent]) -> list[bool]:

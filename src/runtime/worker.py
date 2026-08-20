@@ -14,8 +14,16 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
+# Try to import torch for GPU memory logging
+try:
+    import torch
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
+
 from src.camera.base import CameraBase
 from src.events import EventPublisher, MultiPlateCollector
+from src.observability import get_profiler
 from src.pipeline.lpr_pipeline import LPRPipeline
 
 if TYPE_CHECKING:
@@ -33,8 +41,8 @@ class WorkerConfig:
     max_frames: int = 20
     max_wait_seconds: float = 10.0
     cooldown_seconds: float = 30.0
-    preview: bool = False  # Enable camera preview window
-    save_frames: bool = False  # Save frames with detections
+    preview: bool = False
+    save_frames: bool = False
 
 
 class LPRRuntimeWorker:
@@ -54,18 +62,7 @@ class LPRRuntimeWorker:
         on_error: Callable | None = None,
         overlay: "OverlayRenderer | None" = None,
     ):
-        """Initialize runtime worker.
-
-        Args:
-            camera: Camera instance
-            pipeline: LPR pipeline
-            publisher: Event publisher
-            config: Worker configuration
-            on_frame: Optional callback for each frame
-            on_result: Optional callback for each LPR result
-            on_error: Optional callback for errors
-            overlay: Optional overlay renderer for preview
-        """
+        """Initialize runtime worker."""
         self.camera = camera
         self.pipeline = pipeline
         self.publisher = publisher
@@ -74,6 +71,7 @@ class LPRRuntimeWorker:
         self.on_result = on_result
         self.on_error = on_error
         self._overlay = overlay
+        self._configured_fps = config.inference_fps if config else 5.0
 
         self._collector = MultiPlateCollector(
             max_frames=self.config.max_frames,
@@ -87,11 +85,9 @@ class LPRRuntimeWorker:
         self._running = False
         self._last_inference = 0.0
 
-        # Track last processed plate by NORMALIZED TEXT (not box_key)
-        # This prevents duplicate events for same plate appearing at different positions
+        # Track last processed plate by NORMALIZED TEXT
         self._last_processed_plate: str | None = None
 
-        # Save frames for debugging
         self._save_dir = "captures"
         self._saved_count = 0
 
@@ -118,11 +114,7 @@ class LPRRuntimeWorker:
         logger.info("LPR runtime worker started")
 
     def stop(self, timeout: float = 5.0) -> None:
-        """Stop the runtime worker gracefully.
-
-        Args:
-            timeout: Timeout in seconds
-        """
+        """Stop the runtime worker gracefully."""
         if not self._running:
             return
 
@@ -132,7 +124,6 @@ class LPRRuntimeWorker:
         if self._thread is not None:
             self._thread.join(timeout=timeout)
 
-        # Stop overlay renderer
         if self._overlay is not None:
             self._overlay.stop()
 
@@ -141,17 +132,16 @@ class LPRRuntimeWorker:
 
     def _run_loop(self) -> None:
         """Main runtime loop."""
-        logger.info("=" * 70)
+        logger.info("=" * 56)
         logger.info("STARTING 24/7 LPR CAMERA WORKER")
         logger.info(f"Camera: {self.camera.source}")
         logger.info(f"Inference FPS: {self.config.inference_fps}")
         logger.info(f"Max frames per plate: {self.config.max_frames}")
-        logger.info("=" * 70)
+        logger.info("=" * 56)
 
         while not self._stop_event.is_set():
 
             try:
-                # Connect to camera
                 if not self.camera.connect():
                     logger.error("Camera connection failed")
                     self._wait_with_check(self.config.reconnect_delay)
@@ -159,7 +149,6 @@ class LPRRuntimeWorker:
 
                 logger.info("Camera connected")
 
-                # Run inference loop
                 self._inference_loop()
 
             except Exception as e:
@@ -171,7 +160,6 @@ class LPRRuntimeWorker:
                 if self.camera:
                     self.camera.disconnect()
 
-            # Reconnect delay
             if not self._stop_event.is_set():
                 logger.info(f"Reconnecting in {self.config.reconnect_delay}s...")
                 self._wait_with_check(self.config.reconnect_delay)
@@ -182,8 +170,7 @@ class LPRRuntimeWorker:
         """Run inference loop until stop or disconnect."""
         target_interval = 1.0 / max(self.config.inference_fps, 0.1)
         self._last_inference = time.time()
-        self._frame_count = 0
-        self._last_plate_count = 0
+        profiler = get_profiler()
 
         while not self._stop_event.is_set():
             # Read frame
@@ -191,7 +178,10 @@ class LPRRuntimeWorker:
 
             if frame is None:
                 logger.warning("Frame read failed, reconnecting...")
+                profiler.camera_error()
                 break
+
+            profiler.camera_read()
 
             # Optional frame callback
             if self.on_frame:
@@ -203,31 +193,33 @@ class LPRRuntimeWorker:
             # Throttle inference
             now = time.time()
             if now - self._last_inference < target_interval:
+                profiler.inference_skipped()
                 continue
 
             self._last_inference = now
+            profiler.inference_start()
 
             # Run inference
             try:
+                inference_start = time.perf_counter()
                 results = self.pipeline.process_frame(frame)
+                inference_ms = (time.perf_counter() - inference_start) * 1000
+
+                # Record pipeline stats
+                plates_found = len(results)
+                profiler.pipeline_call(inference_ms, plates_found)
 
                 # Process results
                 for result in results:
-                    # Safety check: result must be an LPRResult with box attribute
                     if not hasattr(result, 'box') or not hasattr(result, 'plate_normalized'):
                         logger.warning(f"Invalid result type: {type(result)}")
                         continue
 
-                    # Add to collection (will aggregate all OCR readings for same box)
                     completed = self._collector.add_detections([result])
 
-                    # Handle completed collections
-                    # IMPORTANT: Only process completed collections here
-                    # DO NOT log "New plate detected" for individual frame observations
                     for box_key, best_result in completed:
-                        self._handle_completed_collection(box_key, best_result)
+                        self._handle_completed_collection(box_key, best_result, profiler)
 
-                    # Optional result callback
                     if self.on_result:
                         try:
                             self.on_result(result)
@@ -238,75 +230,56 @@ class LPRRuntimeWorker:
                 logger.error(f"Inference error: {e}")
                 if self.on_error:
                     self.on_error(e)
-                results = []  # Reset results on error
+                results = []
 
             # Update overlay if enabled
             if self._overlay is not None:
                 self._overlay.update(frame, results, self.config.inference_fps)
 
+            # Check for periodic summary
+            if profiler.enabled and profiler.should_print_summary():
+                profiler.print_summary(configured_fps=self._configured_fps)
 
-    def _handle_completed_collection(self, box_key: str, best_result) -> None:
-        """Handle a completed collection after collection phase finishes.
-
-        IMPORTANT: This method implements the NEW LOGIC:
-        1. Get best_plate from best_result (already selected by collection)
-        2. Compare with _last_processed_plate (NOT box_key!)
-        3. If NEW -> log "New plate detected" -> publish -> update _last_processed_plate
-        4. If SAME -> don't publish
-        5. Always cleanup collection with mark_sent()
-
-        Args:
-            box_key: Key identifying this plate position
-            best_result: Best captured result from collection (already selected)
-        """
+    def _handle_completed_collection(self, box_key: str, best_result, profiler) -> None:
+        """Handle a completed collection."""
         try:
             if not best_result:
-                logger.warning(f"No best result for plate at {box_key}")
                 self._collector.mark_sent(box_key)
                 return
 
             best_plate = best_result.plate_normalized
+            collection_size = best_result.frames_count
 
-            # LOGIC: Compare best_plate with last_processed_plate (NOT box_key!)
+            # Check for timeout
+            is_timeout = collection_size < self.config.max_frames
+            if is_timeout:
+                profiler.warn_collection_timeout(self.config.max_wait_seconds)
+
+            profiler.collection_completed(collection_size, timeout=is_timeout)
+            profiler.log_collection_completed(collection_size, best_plate, best_result.confidence)
+
+            # Compare with last processed plate
             if best_plate == self._last_processed_plate:
-                # SAME PLATE - no duplicate event needed
-                logger.debug(f"Plate {best_plate} same as last processed, skipping event")
-                # Still cleanup collection
                 self._collector.mark_sent(box_key)
                 return
 
-            # NEW PLATE - this is where we log "New plate detected"
-            # This log ONLY appears AFTER collection completes and best result is selected
-            logger.info(f"New plate detected: {best_plate}")
-
             # Publish event
-            success = self._send_plate_event(best_result)
+            success = self._send_plate_event(best_result, profiler)
 
-            # Only update last_processed_plate AFTER successful publish
             if success:
                 self._last_processed_plate = best_plate
-                logger.debug(f"Updated last_processed_plate to: {best_plate}")
 
-            # Always cleanup collection
             self._collector.mark_sent(box_key)
 
         except Exception as e:
             logger.error(f"Error handling completed collection: {e}")
-            # Ensure cleanup even on error
             try:
                 self._collector.mark_sent(box_key)
             except Exception:
                 pass
 
-    def _send_plate_event(self, best_result) -> bool:
-        """Send plate event to publisher.
-
-        Args:
-            best_result: Best captured result from collection
-
-        Returns:
-            True if publish succeeded, False otherwise
-        """
+    def _send_plate_event(self, best_result, profiler) -> bool:
+        """Send plate event to publisher."""
         try:
             if not best_result:
                 return False
@@ -320,12 +293,19 @@ class LPRRuntimeWorker:
                 frames_count=best_result.frames_count if hasattr(best_result, 'frames_count') else 0,
             )
 
-            logger.info(f"Best result: plate={plate_text} "
-                       f"confidence={best_result.confidence:.3f}")
-            logger.info(f"Publishing event: plate={plate_text}")
-
-            # Publish
+            # Publish with timing
+            publish_start = time.perf_counter()
             success = self.publisher.publish(event)
+            publish_ms = (time.perf_counter() - publish_start) * 1000
+
+            profiler.event_published(publish_ms, success)
+            profiler.log_event_published(
+                plate=plate_text,
+                frames=best_result.frames_count if hasattr(best_result, 'frames_count') else 0,
+                confidence=best_result.confidence,
+                publish_success=success,
+                latency_ms=publish_ms
+            )
 
             if success:
                 logger.info(f"Event published: plate={plate_text}")
@@ -339,21 +319,13 @@ class LPRRuntimeWorker:
             return False
 
     def _wait_with_check(self, seconds: float) -> None:
-        """Wait with periodic stop check.
-
-        Args:
-            seconds: Seconds to wait
-        """
+        """Wait with periodic stop check."""
         end = time.time() + seconds
         while time.time() < end and not self._stop_event.is_set():
             time.sleep(0.1)
 
     def get_stats(self) -> dict:
-        """Get runtime statistics.
-
-        Returns:
-            Stats dict
-        """
+        """Get runtime statistics."""
         return {
             "running": self._running,
             "camera": str(self.camera.source),
@@ -361,32 +333,13 @@ class LPRRuntimeWorker:
         }
 
     def _get_box_key(self, result: "LPRResult") -> str:
-        """Generate a stable key from bounding box coordinates.
-
-        Uses coarse quantization for stability even with small movements.
-
-        Args:
-            result: LPRResult with box coordinates
-
-        Returns:
-            String key for box tracking
-        """
+        """Generate a stable key from bounding box coordinates."""
         x1, y1, x2, y2 = result.box
-        # Use raw coordinates with coarse quantization (100px grid)
-        # This prevents "new plate" spam when plate moves slightly
         q = 100
         return f"{x1//q}_{y1//q}_{x2//q}_{y2//q}"
 
     def save_frame(self, frame: np.ndarray, prefix: str = "capture") -> str | None:
-        """Save a frame to disk for debugging.
-
-        Args:
-            frame: Frame to save
-            prefix: Filename prefix
-
-        Returns:
-            Path to saved file, or None if failed
-        """
+        """Save a frame to disk for debugging."""
         import os
         try:
             os.makedirs(self._save_dir, exist_ok=True)

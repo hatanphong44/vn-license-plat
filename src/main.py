@@ -2,6 +2,7 @@
 
 Usage:
     python -m src.main
+    python -m src.main --debug
     uvicorn src.main:app --host 0.0.0.0 --port 8000
 """
 
@@ -38,7 +39,6 @@ def load_models(settings: Settings) -> tuple:
     """
     logger = get_logger("main")
 
-    # Load plate detector
     logger.info(f"Loading plate detector: {settings.models.YOLO_MODEL_PATH}")
     plate_detector = create_plate_detector(
         model_path=settings.models.YOLO_MODEL_PATH,
@@ -47,14 +47,12 @@ def load_models(settings: Settings) -> tuple:
         device=settings.models.YOLO_DEVICE,
     )
 
-    # Load text detector
     logger.info("Loading text detector (PP-OCRv6_small_det)...")
     text_detector = create_text_detector(
         model_dir=settings.models.PADDLE_MODEL_DIR,
         device=settings.models.PADDLE_DEVICE,
     )
 
-    # Load text recognizer
     logger.info("Loading text recognizer (PP-OCRv6_small_rec)...")
     text_recognizer = create_text_recognizer(
         model_dir=settings.models.PADDLE_MODEL_DIR,
@@ -66,6 +64,72 @@ def load_models(settings: Settings) -> tuple:
     return plate_detector, text_detector, text_recognizer
 
 
+def _log_debug_startup(logger, settings: Settings, debug: bool) -> None:
+    """Log debug startup information.
+
+    Args:
+        logger: Logger instance
+        settings: Application settings
+        debug: Whether debug mode is enabled
+    """
+    if not debug:
+        return
+
+    logger.info("")
+    logger.info("=" * 56)
+    logger.info("  LPR DEBUG MODE")
+    logger.info("=" * 56)
+    logger.info("")
+
+    # Camera info
+    logger.info("  Camera")
+    logger.info(f"    source: {settings.camera.CAMERA_SOURCE}")
+    logger.info(f"    buffer size: {settings.camera.CAMERA_BUFFER_SIZE}")
+    logger.info("")
+
+    # Models info
+    logger.info("  Models")
+    logger.info(f"    Plate detector: {settings.models.YOLO_MODEL_PATH}")
+    logger.info(f"    Text detector: {settings.models.PADDLE_MODEL_DIR}/PP-OCRv6_small_det")
+    logger.info(f"    Text recognizer: {settings.models.PADDLE_MODEL_DIR}/PP-OCRv6_small_rec")
+    logger.info("")
+
+    # Device info
+    logger.info("  Devices")
+    logger.info(f"    YOLO: {settings.models.YOLO_DEVICE}")
+    logger.info(f"    OCR: {settings.models.PADDLE_DEVICE}")
+
+    try:
+        import torch
+        cuda_available = torch.cuda.is_available()
+        logger.info(f"    CUDA available: {cuda_available}")
+        if cuda_available:
+            for i in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(i)
+                logger.info(f"    CUDA device {i}: {props.name}")
+    except ImportError:
+        pass
+
+    try:
+        import cv2
+        logger.info(f"    OpenCV: {cv2.__version__}")
+    except ImportError:
+        pass
+
+    logger.info("")
+
+    # Runtime config
+    logger.info("  Runtime")
+    logger.info(f"    inference FPS: {settings.camera.INFERENCE_FPS}")
+    logger.info(f"    max frames: {settings.runtime.MAX_CAPTURE_FRAMES}")
+    logger.info(f"    max wait: {settings.runtime.MAX_CAPTURE_WAIT_SECONDS}s")
+    logger.info(f"    cooldown: {settings.runtime.PLATE_COOLDOWN_SECONDS}s")
+    logger.info("")
+
+    logger.info("=" * 56)
+    logger.info("")
+
+
 def create_runtime(
     settings: Settings,
     plate_detector,
@@ -73,21 +137,9 @@ def create_runtime(
     text_recognizer,
     preview: bool = False,
 ) -> LPRRuntimeWorker:
-    """Create and configure the runtime worker.
-
-    Args:
-        settings: Application settings
-        plate_detector: Plate detection model
-        text_detector: Text detection model
-        text_recognizer: Text recognition model
-        preview: Enable camera preview window
-
-    Returns:
-        Configured runtime worker
-    """
+    """Create and configure the runtime worker."""
     get_logger("main")
 
-    # Create pipeline
     pipeline = create_pipeline(
         plate_detector=plate_detector,
         text_detector=text_detector,
@@ -100,7 +152,6 @@ def create_runtime(
         },
     )
 
-    # Create camera
     camera = create_camera(
         source=settings.camera.CAMERA_SOURCE,
         buffer_size=settings.camera.CAMERA_BUFFER_SIZE,
@@ -108,7 +159,6 @@ def create_runtime(
         reconnect_delay=settings.camera.CAMERA_RECONNECT_DELAY,
     )
 
-    # Create event publisher
     publisher = create_http_publisher(
         url=settings.events.CALLBACK_URL,
         timeout=settings.events.CALLBACK_TIMEOUT,
@@ -116,7 +166,6 @@ def create_runtime(
         retry_delay=settings.events.CALLBACK_RETRY_DELAY,
     )
 
-    # Create worker config
     worker_config = WorkerConfig(
         inference_fps=settings.camera.INFERENCE_FPS,
         reconnect_delay=settings.camera.CAMERA_RECONNECT_DELAY,
@@ -126,7 +175,6 @@ def create_runtime(
         preview=preview,
     )
 
-    # Create overlay renderer for preview
     overlay = None
     if preview:
         from src.visualization import create_overlay_renderer
@@ -134,12 +182,11 @@ def create_runtime(
             enabled=True,
             display_fps=True,
             window_name="LPR Camera Preview (q to quit)",
-            headless=True,  # Use headless mode (save frames to disk)
+            headless=True,
             save_dir="captures",
-            save_interval_seconds=5,  # Save frame every 5 seconds
+            save_interval_seconds=5,
         )
 
-    # Create runtime worker
     worker = LPRRuntimeWorker(
         camera=camera,
         pipeline=pipeline,
@@ -148,12 +195,10 @@ def create_runtime(
         overlay=overlay,
     )
 
-    # Start overlay renderer if preview enabled
     if overlay is not None:
         overlay.start()
 
     return worker
-
 
 
 # Lazy app initialization for uvicorn
@@ -161,70 +206,69 @@ _app: FastAPI | None = None
 
 
 def get_app() -> FastAPI:
-    """Get or create FastAPI application (lazy initialization).
-
-    This function is used by uvicorn when running:
-        uvicorn src.main:app --host 0.0.0.0 --port 8000
-
-    Returns:
-        FastAPI app instance with pipeline configured
-    """
+    """Get or create FastAPI application."""
     global _app
     if _app is None:
         from src.api import create_app
 
-        # Load models for pipeline
         settings = get_settings()
         setup_logging(level="INFO")
 
         plate_detector, text_detector, text_recognizer = load_models(settings)
 
-        # Create pipeline
         pipeline = create_pipeline(
             plate_detector=plate_detector,
             text_detector=text_detector,
             text_recognizer=text_recognizer,
         )
 
-        # Create app with pipeline
         _app = create_app(pipeline=pipeline)
 
     return _app
 
 
-# Module-level app for uvicorn: uvicorn src.main:app
+# Module-level app for uvicorn
 app = get_app()
 
 
-def run_runtime(preview: bool = False):
+def run_runtime(preview: bool = False, debug: bool = False):
     """Run the LPR runtime.
 
     Args:
         preview: Enable camera preview window
+        debug: Enable debug profiling
     """
-    # Setup logging
     settings = get_settings()
+    debug_mode = debug or settings.logging.DEBUG
+
     setup_logging(
         level=settings.logging.LOG_LEVEL,
-        debug=settings.logging.DEBUG,
+        debug=debug_mode,
         use_color=settings.logging.USE_COLOR,
     )
+
+    # Initialize profiler
+    from src.observability import init_profiler, set_profiler_enabled
+    init_profiler(enabled=debug_mode)
+    set_profiler_enabled(debug_mode)
+
     logger = get_logger("main")
 
     # Print startup info
-    logger.info("=" * 70)
+    logger.info("=" * 56)
     logger.info("LPR Runtime starting")
     logger.info(f"Camera: {settings.camera.CAMERA_SOURCE}")
     logger.info(f"Inference FPS: {settings.camera.INFERENCE_FPS}")
-    logger.info(f"Preview: {'ENABLED' if preview else 'disabled'}")
-    logger.info(f"Callback URL: {settings.events.CALLBACK_URL or '(not configured)'}")
-    logger.info("=" * 70)
+    if debug_mode:
+        logger.info("DEBUG: enabled")
+    logger.info("=" * 56)
+
+    # Log debug startup info
+    _log_debug_startup(logger, settings, debug_mode)
 
     try:
-        # Load models
         plate_detector, text_detector, text_recognizer = load_models(settings)
 
-        # Create runtime
         worker = create_runtime(
             settings=settings,
             plate_detector=plate_detector,
@@ -233,13 +277,11 @@ def run_runtime(preview: bool = False):
             preview=preview,
         )
 
-        # Start runtime
         worker.start()
 
-        # Keep main thread alive
         logger.info("Runtime started. Press Ctrl+C to stop.")
         if preview:
-            logger.info("Preview window open: Press 'q' in window or Ctrl+C to quit.")
+            logger.info("Preview: enabled")
         while True:
             import time
             time.sleep(1)
@@ -255,22 +297,18 @@ def run_api():
     """Run the API server."""
     import uvicorn
 
-    # Setup
     settings = get_settings()
     setup_logging(level="INFO")
     logger = get_logger("api")
 
-    # Load models
     plate_detector, text_detector, text_recognizer = load_models(settings)
 
-    # Create pipeline
     pipeline = create_pipeline(
         plate_detector=plate_detector,
         text_detector=text_detector,
         text_recognizer=text_recognizer,
     )
 
-    # Create app
     app = create_app(pipeline=pipeline)
 
     logger.info("Starting API server on 0.0.0.0:8000")
@@ -285,9 +323,11 @@ if __name__ == "__main__":
                        help="Run mode: runtime (default) or api")
     parser.add_argument("--preview", action="store_true",
                        help="Enable camera preview window")
+    parser.add_argument("--debug", action="store_true",
+                       help="Enable debug profiling with periodic performance summaries")
     args = parser.parse_args()
 
     if args.mode == "api":
         run_api()
     else:
-        run_runtime(preview=args.preview)
+        run_runtime(preview=args.preview, debug=args.debug)
