@@ -1,16 +1,14 @@
 """Unit tests for domain models."""
 
-import pytest
-from datetime import datetime
 
 from src.domain.models import (
+    CapturedPlate,
+    LPRResult,
+    PlateCollection,
     PlateDetection,
+    PlateEvent,
     TextDetection,
     TextRecognition,
-    LPRResult,
-    CapturedPlate,
-    PlateCollection,
-    PlateEvent,
 )
 
 
@@ -113,7 +111,7 @@ class TestPlateCollection:
     def test_max_frames(self):
         collection = PlateCollection(plate_number="ABC", max_frames=3)
 
-        for i in range(5):
+        for _i in range(5):
             capture = CapturedPlate(
                 plate_normalized="ABC",
                 plate="ABC",

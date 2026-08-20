@@ -1,13 +1,11 @@
 """Unit tests for postprocessor."""
 
-import pytest
-import numpy as np
 
 from src.domain.models import TextRecognition
 from src.pipeline.postprocessor import (
-    TextNormalizer,
-    MultiLineConcatenator,
     LPRPostProcessor,
+    MultiLineConcatenator,
+    TextNormalizer,
 )
 
 

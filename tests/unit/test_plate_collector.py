@@ -1,10 +1,8 @@
 """Unit tests for plate collector."""
 
-import pytest
-import time
 
 from src.domain.models import LPRResult, TextRecognition
-from src.events.plate_collector import PlateCollector, MultiPlateCollector
+from src.events.plate_collector import MultiPlateCollector, PlateCollector
 
 
 class TestPlateCollector:

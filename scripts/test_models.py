@@ -16,20 +16,20 @@ Features:
     Stats: Print timing per stage and total FPS
 """
 
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
+
 import cv2
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ultralytics import YOLO
 from paddleocr import TextDetection, TextRecognition
-
+from ultralytics import YOLO
 
 # ============================================================
 # CONFIGURATION
@@ -215,7 +215,7 @@ def detect_plates(image, model, conf=YOLO_CONF, iou=YOLO_IOU):
     classes = results[0].boxes.cls.detach().cpu().numpy()
 
     detections = []
-    for box, score, cls in zip(boxes, scores, classes):
+    for box, score, cls in zip(boxes, scores, classes, strict=True):
         x1, y1, x2, y2 = map(int, box)
         detections.append({
             "box": [x1, y1, x2, y2],
@@ -308,7 +308,7 @@ def detect_text(plate, model, scale=OCR_UPSCALE):
     scores = data.get("dt_scores", [])
 
     detections = []
-    for poly, score in zip(polygons, scores):
+    for poly, score in zip(polygons, scores, strict=True):
         polygon = np.asarray(poly, dtype=np.float32)
         detections.append({
             "polygon": polygon,
@@ -450,7 +450,7 @@ def ocr_plate(plate, det_model, rec_model, visualize=True):
 
     # Visualize text crops
     if visualize and crops:
-        fig, axes = plt.subplots(1, len(crops), figsize=(6 * len(crops), 4))
+        _, axes = plt.subplots(1, len(crops), figsize=(6 * len(crops), 4))
         if len(crops) == 1:
             axes = [axes]
         for i, crop in enumerate(crops):
@@ -468,7 +468,7 @@ def ocr_plate(plate, det_model, rec_model, visualize=True):
     print("-" * 50)
 
     outputs = []
-    for meta, rec in zip(metadata, results):
+    for meta, rec in zip(metadata, results, strict=True):
         if rec["text"] and rec["score"] >= REC_MIN_SCORE:
             outputs.append({
                 "line": meta["line"],
@@ -740,7 +740,7 @@ def process_video(video_path, output_path, plate_model, det_model, rec_model):
 
                     if crops:
                         results = recognize_text(crops, rec_model)
-                        for meta, rec in zip(metadata, results):
+                        for meta, rec in zip(metadata, results, strict=True):
                             if rec["text"]:
                                 # Draw text on frame
                                 text_x = x1 + int(np.min(meta["polygon"][:, 0]) / OCR_UPSCALE)
@@ -827,7 +827,7 @@ def process_camera(plate_model, det_model, rec_model):
 
                     if crops:
                         results = recognize_text(crops, rec_model)
-                        for meta, rec in zip(metadata, results):
+                        for meta, rec in zip(metadata, results, strict=True):
                             if rec["text"]:
                                 text_x = x1 + int(np.min(meta["polygon"][:, 0]) / OCR_UPSCALE)
                                 text_y = y2
