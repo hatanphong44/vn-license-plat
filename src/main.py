@@ -51,12 +51,14 @@ def load_models(settings: Settings) -> tuple:
     # Load text detector
     logger.info("Loading text detector (PP-OCRv6_small_det)...")
     text_detector = create_text_detector(
+        model_dir=settings.models.PADDLE_MODEL_DIR,
         device=settings.models.PADDLE_DEVICE,
     )
 
     # Load text recognizer
     logger.info("Loading text recognizer (PP-OCRv6_small_rec)...")
     text_recognizer = create_text_recognizer(
+        model_dir=settings.models.PADDLE_MODEL_DIR,
         device=settings.models.PADDLE_DEVICE,
     )
 

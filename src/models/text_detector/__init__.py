@@ -5,6 +5,7 @@ Responsibilities (per PLAN.md):
 - No camera, HTTP, FastAPI, Docker, or DB logic
 """
 
+import os
 import json
 import logging
 from typing import Protocol
@@ -42,21 +43,27 @@ class PaddleTextDetector:
 
     def __init__(
         self,
+        model_dir: str = "./models",
         device: str = "gpu:0",
     ):
         """Initialize PaddleOCR text detector.
 
         Args:
+            model_dir: Base directory containing PP-OCRv6_small_det folder
             device: Device for inference (gpu:0, gpu:1, cpu)
         """
+        self.model_dir = model_dir
         self.device = device
         self._model = None
 
     def load(self) -> None:
         """Load the model into memory."""
-        logger.info("Loading PP-OCRv6_small_det...")
+        # model_dir should be the base models directory containing PP-OCRv6_small_det folder
+        det_model_dir = os.path.join(self.model_dir, "PP-OCRv6_small_det")
+        logger.info(f"Loading PP-OCRv6_small_det from {det_model_dir}...")
         self._model = TextDetection(
             model_name="PP-OCRv6_small_det",
+            model_dir=det_model_dir,
             device=self.device,
         )
         logger.info("OCR text detector loaded")
@@ -104,16 +111,18 @@ class PaddleTextDetector:
 
 
 def create_text_detector(
+    model_dir: str = "./models",
     device: str = "gpu:0",
 ) -> PaddleTextDetector:
     """Factory function to create text detector.
 
     Args:
+        model_dir: Base directory containing model folders
         device: Device for inference
 
     Returns:
         Configured text detector instance
     """
-    detector = PaddleTextDetector(device=device)
+    detector = PaddleTextDetector(model_dir=model_dir, device=device)
     detector.load()
     return detector

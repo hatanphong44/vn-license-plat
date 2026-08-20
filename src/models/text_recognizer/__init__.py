@@ -5,6 +5,7 @@ Responsibilities (per PLAN.md):
 - No camera, HTTP, FastAPI, Docker, or DB logic
 """
 
+import os
 import json
 import logging
 from typing import Protocol
@@ -42,21 +43,27 @@ class PaddleTextRecognizer:
 
     def __init__(
         self,
+        model_dir: str = "./models",
         device: str = "gpu:0",
     ):
         """Initialize PaddleOCR text recognizer.
 
         Args:
+            model_dir: Base directory containing PP-OCRv6_small_rec folder
             device: Device for inference (gpu:0, gpu:1, cpu)
         """
+        self.model_dir = model_dir
         self.device = device
         self._model = None
 
     def load(self) -> None:
         """Load the model into memory."""
-        logger.info("Loading PP-OCRv6_small_rec...")
+        # model_dir should be the base models directory containing PP-OCRv6_small_rec folder
+        rec_model_dir = os.path.join(self.model_dir, "PP-OCRv6_small_rec")
+        logger.info(f"Loading PP-OCRv6_small_rec from {rec_model_dir}...")
         self._model = TextRecognition(
             model_name="PP-OCRv6_small_rec",
+            model_dir=rec_model_dir,
             device=self.device,
         )
         logger.info("OCR text recognizer loaded")
@@ -116,16 +123,18 @@ class PaddleTextRecognizer:
 
 
 def create_text_recognizer(
+    model_dir: str = "./models",
     device: str = "gpu:0",
 ) -> PaddleTextRecognizer:
     """Factory function to create text recognizer.
 
     Args:
+        model_dir: Base directory containing model folders
         device: Device for inference
 
     Returns:
         Configured text recognizer instance
     """
-    recognizer = PaddleTextRecognizer(device=device)
+    recognizer = PaddleTextRecognizer(model_dir=model_dir, device=device)
     recognizer.load()
     return recognizer

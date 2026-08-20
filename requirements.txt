@@ -1,13 +1,14 @@
 # ============================================================
 # LPR Runtime - Python Dependencies
+# Python: 3.12
 # ============================================================
 
 # ============================================================
 # YOLO
-# PyTorch must be installed separately with CUDA 12.8:
-#
+# PyTorch must be installed separately with CUDA 13.0:
+# python -m pip uninstall -y torch torchvision torchaudio
 # python -m pip install torch torchvision \
-#   --index-url https://download.pytorch.org/whl/cu128
+#   --index-url https://download.pytorch.org/whl/cu130
 # ============================================================
 ultralytics>=8.0.0
 
@@ -29,21 +30,19 @@ uvicorn[standard]>=0.23.0
 # HTTP Client
 # ============================================================
 requests>=2.31.0
-httpx>=0.24.0
 
 # ============================================================
 # Image Processing
 # ============================================================
 opencv-python-headless>=4.8.0
 numpy>=1.24.0
-Pillow>=10.0.0
+matplotlib>=3.7.0
 
 # ============================================================
 # Configuration
 # ============================================================
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
-python-dotenv>=1.0.0
 
 # ============================================================
 # Utilities
@@ -55,4 +54,3 @@ python-multipart>=0.0.6
 # ============================================================
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
-pytest-cov>=4.1.0

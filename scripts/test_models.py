@@ -1,530 +1,903 @@
-"""Model Testing Script.
-
-Per PLAN.md: Run inference on a video file to visually verify all 3 models work correctly.
+#!/usr/bin/env python3
+"""
+Test Models Script - Video-based model testing tool.
 
 Usage:
     python scripts/test_models.py --video path/to/video.mp4 --output result.mp4
-    python scripts/test_models.py  # Use camera
+    python scripts/test_models.py --video path/to/video.mp4
+    python scripts/test_models.py  # Uses camera if no video specified
+
+Features:
+    Stage 1: YOLO plate detection - green boxes around plates
+    Stage 2: OCR text detection - blue boxes around text regions
+    Stage 3: OCR text recognition - red text overlaid on plates
+    Overlay: Show each stage result on the frame for debugging
+    Save: Optional output video with all annotations
+    Stats: Print timing per stage and total FPS
 """
 
-import argparse
 import os
 import sys
-import time
-import logging
-from pathlib import Path
-
+import json
+import argparse
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 
-# Add parent dir to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.models import (
-    YOLOPlateDetector,
-    PaddleTextDetector,
-    PaddleTextRecognizer,
+from ultralytics import YOLO
+from paddleocr import TextDetection, TextRecognition
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+# Default model paths (can be overridden via environment variables)
+DEFAULT_YOLO_MODEL_PATH = os.getenv(
+    "YOLO_MODEL_PATH",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "Plate.pt")
 )
-from src.pipeline.cropper import PlateCropper, TextCropper, PlatePreprocessor
-from src.visualization.annotator import ResultAnnotator, PlateDetectionAnnotator
 
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+DEFAULT_PADDLE_MODEL_DIR = os.getenv(
+    "PADDLE_MODEL_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
 )
-logger = logging.getLogger("test_models")
-
-
-class ModelTester:
-    """Test all 3 models on video or camera."""
-
-    def __init__(
-        self,
-        yolo_path: str,
-        paddle_device: str = "gpu:0",
-        yolo_conf: float = 0.25,
-        yolo_iou: float = 0.45,
-        upscale: int = 4,
-        show_stages: bool = True,
-    ):
-        """Initialize model tester.
-
-        Args:
-            yolo_path: Path to YOLO model
-            paddle_device: Device for PaddleOCR
-            yolo_conf: YOLO confidence threshold
-            yolo_iou: YOLO IoU threshold
-            upscale: Upscale factor for OCR
-            show_stages: Show intermediate results
-        """
-        self.yolo_path = yolo_path
-        self.paddle_device = paddle_device
-        self.yolo_conf = yolo_conf
-        self.yolo_iou = yolo_iou
-        self.upscale = upscale
-        self.show_stages = show_stages
-
-        self._plate_detector = None
-        self._text_detector = None
-        self._text_recognizer = None
-        self._plate_cropper = PlateCropper(padding=0.05)
-        self._text_cropper = TextCropper(padding=10)
-        self._preprocessor = PlatePreprocessor(upscale_factor=upscale)
-        self._annotator = ResultAnnotator()
-        self._stage_annotator = PlateDetectionAnnotator()
-
-    def load_models(self) -> None:
-        """Load all models."""
-        logger.info("=" * 60)
-        logger.info("LOADING MODELS")
-        logger.info("=" * 60)
-
-        # Stage 1: YOLO Plate Detector
-        logger.info(f"Loading YOLO plate detector: {self.yolo_path}")
-        self._plate_detector = YOLOPlateDetector(
-            model_path=self.yolo_path,
-            conf=self.yolo_conf,
-            iou=self.yolo_iou,
-            device="0" if "gpu" in self.paddle_device else "cpu",
-        )
-        self._plate_detector.load()
-        logger.info("✓ YOLO plate detector loaded")
-
-        # Stage 2: PaddleOCR Text Detector
-        logger.info("Loading PP-OCRv6_small_det...")
-        self._text_detector = PaddleTextDetector(device=self.paddle_device)
-        self._text_detector.load()
-        logger.info("✓ OCR text detector loaded")
-
-        # Stage 3: PaddleOCR Text Recognizer
-        logger.info("Loading PP-OCRv6_small_rec...")
-        self._text_recognizer = PaddleTextRecognizer(device=self.paddle_device)
-        self._text_recognizer.load()
-        logger.info("✓ OCR text recognizer loaded")
-
-        logger.info("=" * 60)
-        logger.info("ALL MODELS LOADED SUCCESSFULLY")
-        logger.info("=" * 60)
-
-    def run_on_video(
-        self,
-        video_path: str,
-        output_path: str = None,
-        save_frames: bool = False,
-    ) -> None:
-        """Run inference on video file.
-
-        Args:
-            video_path: Path to input video
-            output_path: Path to save output video
-            save_frames: Save individual frames
-        """
-        logger.info(f"Opening video: {video_path}")
-
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            logger.error(f"Failed to open video: {video_path}")
-            return
-
-        # Get video properties
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-        logger.info(f"Video: {width}x{height} @ {fps:.1f} FPS, {total_frames} frames")
-
-        # Setup output writer
-        writer = None
-        if output_path:
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-            logger.info(f"Output video: {output_path}")
-
-        # Processing loop
-        frame_num = 0
-        stage_times = {"plate": [], "text_det": [], "text_rec": [], "total": []}
-
-        logger.info("Starting inference...")
-        logger.info("Press 'q' to quit, 's' to save current frame")
-
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                logger.info("End of video")
-                break
-
-            frame_num += 1
-            loop_start = time.time()
-
-            # Run inference
-            result_frame, times = self._process_frame(frame)
-            stage_times["total"].append(time.time() - loop_start)
-
-            for k, v in times.items():
-                if k in stage_times:
-                    stage_times[k].append(v)
-
-            # Calculate FPS
-            elapsed = time.time() - loop_start
-            current_fps = 1.0 / elapsed if elapsed > 0 else 0
-
-            # Draw FPS
-            cv2.putText(
-                result_frame,
-                f"FPS: {current_fps:.1f} | Frame: {frame_num}/{total_frames}",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
-                2,
-            )
-
-            # Show frame
-            cv2.imshow("LPR Model Test", result_frame)
-
-            # Write output
-            if writer:
-                writer.write(result_frame)
-
-            # Save frame on 's'
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q') or key == 27:
-                break
-            elif key == ord('s') and save_frames:
-                save_path = f"frame_{frame_num:06d}.jpg"
-                cv2.imwrite(save_path, result_frame)
-                logger.info(f"Saved: {save_path}")
-
-        # Cleanup
-        cap.release()
-        if writer:
-            writer.release()
-        cv2.destroyAllWindows()
-
-        # Print stats
-        self._print_stats(stage_times, frame_num)
-
-    def run_on_camera(self, camera_id: int = 0) -> None:
-        """Run inference on live camera.
-
-        Args:
-            camera_id: Camera device ID
-        """
-        logger.info(f"Opening camera {camera_id}")
-
-        cap = cv2.VideoCapture(camera_id)
-        if not cap.isOpened():
-            logger.error(f"Failed to open camera {camera_id}")
-            return
-
-        logger.info("Camera opened. Starting inference...")
-        logger.info("Press 'q' to quit")
-
-        frame_num = 0
-        stage_times = {"plate": [], "text_det": [], "text_rec": [], "total": []}
-
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                logger.warning("Frame read failed")
-                continue
-
-            frame_num += 1
-            loop_start = time.time()
-
-            # Run inference
-            result_frame, times = self._process_frame(frame)
-            stage_times["total"].append(time.time() - loop_start)
-
-            for k, v in times.items():
-                if k in stage_times:
-                    stage_times[k].append(v)
-
-            # FPS
-            elapsed = time.time() - loop_start
-            current_fps = 1.0 / elapsed if elapsed > 0 else 0
-
-            cv2.putText(
-                result_frame,
-                f"FPS: {current_fps:.1f}",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
-                2,
-            )
-
-            cv2.imshow("LPR Model Test", result_frame)
-
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q') or key == 27:
-                break
-
-        cap.release()
-        cv2.destroyAllWindows()
-        self._print_stats(stage_times, frame_num)
-
-    def _process_frame(self, frame: np.ndarray) -> tuple[np.ndarray, dict]:
-        """Process a single frame.
-
-        Args:
-            frame: Input frame
-
-        Returns:
-            Tuple of (annotated frame, stage times dict)
-        """
-        times = {}
-        result_frame = frame.copy()
-
-        # Stage 1: Plate Detection (YOLO)
-        t0 = time.time()
-        plates = self._plate_detector.detect(frame)
-        times["plate"] = time.time() - t0
-
-        if not plates:
-            return result_frame, times
-
-        # Draw plate boxes (green) if showing stages
-        if self.show_stages:
-            boxes = [p.box for p in plates]
-            scores = [p.score for p in plates]
-            result_frame = self._stage_annotator.draw_plate_boxes(
-                result_frame, boxes, scores
-            )
-
-        # Process each plate
-        all_ocr_results = []
-
-        for plate_idx, plate_det in enumerate(plates):
-            # Crop plate
-            plate_crop = self._plate_cropper.crop(frame, plate_det)
-            if plate_crop is None:
-                continue
-
-            # Preprocess
-            plate_prep = self._preprocessor.preprocess(plate_crop)
-
-            # Stage 2: Text Detection
-            t1 = time.time()
-            text_dets = self._text_detector.detect(plate_prep)
-            times["text_det"] = (times.get("text_det", 0) + time.time() - t1) / 2
-
-            if not text_dets:
-                continue
-
-            # Draw text boxes (blue) if showing stages
-            if self.show_stages:
-                polys = [d.polygon.tolist() for d in text_dets]
-                result_frame = self._stage_annotator.draw_text_boxes(
-                    result_frame, polys
-                )
-
-            # Crop and recognize text
-            crops = []
-            for det in text_dets:
-                crop = self._text_cropper.crop(plate_prep, det)
-                if crop is not None:
-                    crops.append(crop)
-
-            if not crops:
-                continue
-
-            # Stage 3: Text Recognition
-            t2 = time.time()
-            texts = self._text_recognizer.recognize(crops)
-            times["text_rec"] = (times.get("text_rec", 0) + time.time() - t2) / 2
-
-            if texts:
-                all_ocr_results.extend(texts)
-
-        # Final annotation: draw recognized text (red) on result
-        if all_ocr_results:
-            # Create a simple result object for drawing
-            from src.domain.models import LPRResult
-
-            result = LPRResult(
-                plate_index=0,
-                plate=" | ".join(t.text for t in all_ocr_results),
-                plate_normalized="".join(t.text for t in all_ocr_results).replace("_", ""),
-                box=plates[0].box if plates else [0, 0, 100, 100],
-                yolo_score=plates[0].score if plates else 0,
-                class_name="plate",
-                ocr_results=all_ocr_results,
-            )
-
-            result_frame = self._annotator.draw_result(result_frame, result)
-
-        return result_frame, times
-
-    def _print_stats(self, times: dict, total_frames: int) -> None:
-        """Print processing statistics."""
-        logger.info("=" * 60)
-        logger.info("PROCESSING STATISTICS")
-        logger.info("=" * 60)
-        logger.info(f"Total frames processed: {total_frames}")
-
-        for stage, stage_times in times.items():
-            if stage_times:
-                avg_time = sum(stage_times) / len(stage_times)
-                fps = 1.0 / avg_time if avg_time > 0 else 0
-                logger.info(f"{stage:12s}: avg={avg_time*1000:.1f}ms, fps={fps:.1f}")
-
-        if times.get("total"):
-            total_avg = sum(times["total"]) / len(times["total"])
-            logger.info(f"{'TOTAL':12s}: avg={total_avg*1000:.1f}ms, "
-                       f"fps={1.0/total_avg:.1f}")
-
-
-def verify_gpu():
-    """Verify GPU setup."""
-    logger.info("=" * 60)
-    logger.info("GPU VERIFICATION")
-    logger.info("=" * 60)
-
-    # PyTorch
+
+# Default image directory for testing
+DEFAULT_IMG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Test_Images")
+
+
+# ============================================================
+# DEVICE CONFIGURATION
+# ============================================================
+
+def get_device_config():
+    """Get device configuration for YOLO and PaddleOCR.
+
+    Returns:
+        Tuple of (yolo_device, paddle_device)
+    """
+    # YOLO / Ultralytics uses:
+    #   0       -> GPU 0
+    #   1       -> GPU 1
+    #   "cpu"   -> CPU
+    yolo_device = int(os.getenv("YOLO_DEVICE", "0"))
+
+    # PaddleOCR uses:
+    #   "gpu:0"
+    #   "gpu:1"
+    #   "cpu"
+    paddle_device = os.getenv("PADDLE_DEVICE", "gpu:0")
+
+    return yolo_device, paddle_device
+
+
+# ============================================================
+# PARAMETERS
+# ============================================================
+
+# YOLO parameters
+YOLO_CONF = float(os.getenv("YOLO_CONF", "0.25"))
+YOLO_IOU = float(os.getenv("YOLO_IOU", "0.45"))
+
+# OCR parameters
+OCR_UPSCALE = int(os.getenv("OCR_UPSCALE", "4"))
+TEXT_PADDING = int(os.getenv("TEXT_PADDING", "10"))
+REC_MIN_SCORE = float(os.getenv("REC_MIN_SCORE", "0.0"))
+
+
+# ============================================================
+# MODEL LOADING
+# ============================================================
+
+def print_device_info():
+    """Print CUDA device information."""
+    print("=" * 70)
+    print("DEVICE CONFIGURATION")
+    print("=" * 70)
+
+    yolo_device, paddle_device = get_device_config()
+    print(f"YOLO device    : {yolo_device}")
+    print(f"Paddle device  : {paddle_device}")
+
     try:
         import torch
-        logger.info(f"PyTorch CUDA available: {torch.cuda.is_available()}")
+        print()
+        print(f"PyTorch CUDA available : {torch.cuda.is_available()}")
+        print(f"CUDA device count      : {torch.cuda.device_count()}")
+
         if torch.cuda.is_available():
-            logger.info(f"PyTorch GPU: {torch.cuda.get_device_name(0)}")
-    except ImportError:
-        logger.warning("PyTorch not installed")
+            for i in range(torch.cuda.device_count()):
+                print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+    except Exception as e:
+        print(f"Could not inspect PyTorch CUDA: {e}")
 
-    # PaddlePaddle
-    try:
-        import paddle
-        logger.info(f"PaddlePaddle compiled with CUDA: {paddle.device.is_compiled_with_cuda()}")
-        if paddle.device.is_compiled_with_cuda():
-            logger.info(f"PaddlePaddle GPU count: {paddle.device.cuda.device_count()}")
-    except ImportError:
-        logger.warning("PaddlePaddle not installed")
+    print("=" * 70)
 
-    # Ultralytics
-    try:
-        from ultralytics.utils.torch_utils import select_device
+
+def load_models():
+    """Load all ML models.
+
+    Returns:
+        Tuple of (plate_model, det_model, rec_model)
+    """
+    yolo_device, paddle_device = get_device_config()
+
+    # Load YOLO plate detector
+    print(f"\nLoading YOLO plate detector from {DEFAULT_YOLO_MODEL_PATH}...")
+    plate_model = YOLO(DEFAULT_YOLO_MODEL_PATH)
+    print(f"YOLO classes: {plate_model.names}")
+    print(f"YOLO device: {yolo_device}")
+    print("YOLO loaded successfully!")
+
+    # Load PaddleOCR text detector
+    det_model_path = os.path.join(DEFAULT_PADDLE_MODEL_DIR, "PP-OCRv6_small_det")
+    print(f"\nLoading PP-OCRv6_small_det from {det_model_path}...")
+    det_model = TextDetection(
+        model_name="PP-OCRv6_small_det",
+        model_dir=det_model_path,
+        device=paddle_device
+    )
+    print(f"PaddleOCR DET device: {paddle_device}")
+    print("PP-OCRv6_small_det loaded!")
+
+    # Load PaddleOCR text recognizer
+    rec_model_path = os.path.join(DEFAULT_PADDLE_MODEL_DIR, "PP-OCRv6_small_rec")
+    print(f"\nLoading PP-OCRv6_small_rec from {rec_model_path}...")
+    rec_model = TextRecognition(
+        model_name="PP-OCRv6_small_rec",
+        model_dir=rec_model_path,
+        device=paddle_device
+    )
+    print(f"PaddleOCR REC device: {paddle_device}")
+    print("PP-OCRv6_small_rec loaded!")
+
+    print("\n" + "=" * 70)
+    print("ALL MODELS LOADED SUCCESSFULLY")
+    print("=" * 70)
+    print(f"YOLO       -> GPU {yolo_device}")
+    print(f"PaddleOCR  -> {paddle_device}")
+    print("=" * 70)
+
+    return plate_model, det_model, rec_model
+
+
+# ============================================================
+# RESULT PARSING
+# ============================================================
+
+def get_result_dict(res):
+    """Parse PaddleOCR result to extract detection data."""
+    data = res.json
+    if callable(data):
+        data = data()
+    if isinstance(data, str):
+        data = json.loads(data)
+    if isinstance(data, dict) and "res" in data:
+        data = data["res"]
+    return data
+
+
+# ============================================================
+# YOLO DETECTION
+# ============================================================
+
+def detect_plates(image, model, conf=YOLO_CONF, iou=YOLO_IOU):
+    """Detect plates using YOLO.
+
+    Args:
+        image: Input image (BGR format)
+        model: YOLO model
+        conf: Confidence threshold
+        iou: IoU threshold
+
+    Returns:
+        List of detection dictionaries
+    """
+    yolo_device, _ = get_device_config()
+
+    results = model.predict(
+        source=image,
+        conf=conf,
+        iou=iou,
+        device=yolo_device,
+        verbose=False
+    )
+
+    if not results or not results[0].boxes:
+        return []
+
+    boxes = results[0].boxes.xyxy.detach().cpu().numpy()
+    scores = results[0].boxes.conf.detach().cpu().numpy()
+    classes = results[0].boxes.cls.detach().cpu().numpy()
+
+    detections = []
+    for box, score, cls in zip(boxes, scores, classes):
+        x1, y1, x2, y2 = map(int, box)
+        detections.append({
+            "box": [x1, y1, x2, y2],
+            "score": float(score),
+            "class_id": int(cls),
+            "class_name": model.names[int(cls)],
+        })
+
+    return detections
+
+
+def crop_plate(image, box, padding=0.05):
+    """Crop plate from image with padding.
+
+    Args:
+        image: Input image
+        box: Bounding box [x1, y1, x2, y2]
+        padding: Padding ratio
+
+    Returns:
+        Cropped plate image or None
+    """
+    h, w = image.shape[:2]
+    x1, y1, x2, y2 = box
+
+    box_w = x2 - x1
+    box_h = y2 - y1
+
+    pad_x = int(box_w * padding)
+    pad_y = int(box_h * padding)
+
+    x1 = max(0, x1 - pad_x)
+    y1 = max(0, y1 - pad_y)
+    x2 = min(w, x2 + pad_x)
+    y2 = min(h, y2 + pad_y)
+
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    return image[y1:y2, x1:x2]
+
+
+def upscale_plate(plate, scale=OCR_UPSCALE):
+    """Upscale plate image for OCR.
+
+    Args:
+        plate: Plate image
+        scale: Upscale factor
+
+    Returns:
+        Upscaled plate image
+    """
+    if plate is None or plate.size == 0:
+        return None
+
+    return cv2.resize(
+        plate,
+        None,
+        fx=scale,
+        fy=scale,
+        interpolation=cv2.INTER_CUBIC
+    )
+
+
+# ============================================================
+# OCR DETECTION
+# ============================================================
+
+def detect_text(plate, model, scale=OCR_UPSCALE):
+    """Detect text regions using PaddleOCR.
+
+    Args:
+        plate: Plate image (already upscaled)
+        model: Text detection model
+        scale: Original upscale factor
+
+    Returns:
+        Tuple of (upscaled_plate, detections)
+    """
+    plate_up = upscale_plate(plate, scale)
+    if plate_up is None:
+        return None, []
+
+    results = list(model.predict(input=plate_up, batch_size=1))
+    if not results:
+        return plate_up, []
+
+    data = get_result_dict(results[0])
+    polygons = data.get("dt_polys", [])
+    scores = data.get("dt_scores", [])
+
+    detections = []
+    for poly, score in zip(polygons, scores):
+        polygon = np.asarray(poly, dtype=np.float32)
+        detections.append({
+            "polygon": polygon,
+            "score": float(score),
+            "x_center": float(np.mean(polygon[:, 0])),
+            "y_center": float(np.mean(polygon[:, 1])),
+        })
+
+    # Sort by reading order (top -> bottom, left -> right)
+    detections.sort(key=lambda x: (x["y_center"], x["x_center"]))
+
+    return plate_up, detections
+
+
+def crop_polygon(image, polygon, padding=TEXT_PADDING):
+    """Crop polygon region from image.
+
+    Args:
+        image: Input image
+        polygon: Polygon coordinates
+        padding: Padding in pixels
+
+    Returns:
+        Cropped polygon image
+    """
+    polygon = np.asarray(polygon, dtype=np.float32)
+
+    x1 = int(np.floor(np.min(polygon[:, 0]))) - padding
+    y1 = int(np.floor(np.min(polygon[:, 1]))) - padding
+    x2 = int(np.ceil(np.max(polygon[:, 0]))) + padding
+    y2 = int(np.ceil(np.max(polygon[:, 1]))) + padding
+
+    x1 = max(0, x1)
+    y1 = max(0, y1)
+    x2 = min(image.shape[1], x2)
+    y2 = min(image.shape[0], y2)
+
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    return image[y1:y2, x1:x2]
+
+
+def recognize_text(crops, model):
+    """Recognize text from cropped images.
+
+    Args:
+        crops: List of cropped images
+        model: Text recognition model
+
+    Returns:
+        List of recognition results
+    """
+    if not crops:
+        return []
+
+    results = list(model.predict(input=crops, batch_size=len(crops)))
+    outputs = []
+
+    for res in results:
+        data = get_result_dict(res)
+        text = data.get("rec_text", "").strip()
         try:
-            device = select_device('0')
-        except ValueError:
-            device = select_device('cpu')
-        logger.info(f"Ultralytics device: {device}")
-    except ImportError:
-        logger.warning("Ultralytics not installed")
+            score = float(data.get("rec_score", 0.0))
+        except Exception:
+            score = 0.0
 
-    logger.info("=" * 60)
+        outputs.append({
+            "text": text,
+            "score": score,
+        })
 
+    return outputs
+
+
+def ocr_plate(plate, det_model, rec_model, visualize=True):
+    """Run full OCR pipeline on a plate.
+
+    Args:
+        plate: Cropped plate image
+        det_model: Text detection model
+        rec_model: Text recognition model
+        visualize: Whether to show visualizations
+
+    Returns:
+        List of OCR results
+    """
+    if plate is None or plate.size == 0:
+        return []
+
+    print("\n" + "-" * 50)
+    print("OCR DETECTION")
+    print("-" * 50)
+    print(f"Original shape: {plate.shape}")
+
+    # Detect text
+    plate_up, detections = detect_text(plate, det_model)
+    if plate_up is None:
+        return []
+
+    print(f"Upscaled shape: {plate_up.shape}")
+    print(f"Text boxes detected: {len(detections)}")
+
+    if not detections:
+        print("NO TEXT DETECTED")
+        if visualize:
+            plt.figure(figsize=(12, 5))
+            plt.imshow(cv2.cvtColor(plate_up, cv2.COLOR_BGR2RGB))
+            plt.axis("off")
+            plt.title("PP-OCRv6_small_det - NO TEXT")
+            plt.show()
+        return []
+
+    for i, item in enumerate(detections):
+        print(f"Box {i}: det_score={item['score']:.4f}")
+
+    # Crop text regions
+    crops = []
+    metadata = []
+
+    for i, item in enumerate(detections):
+        crop = crop_polygon(plate_up, item["polygon"], padding=TEXT_PADDING)
+        if crop is None or crop.size == 0:
+            continue
+
+        # Add white padding
+        crop = cv2.copyMakeBorder(
+            crop, 10, 10, 10, 10,
+            cv2.BORDER_CONSTANT,
+            value=(255, 255, 255)
+        )
+
+        crops.append(crop)
+        metadata.append({
+            "line": i,
+            "det_score": item["score"],
+            "polygon": item["polygon"],
+        })
+
+    # Visualize text crops
+    if visualize and crops:
+        fig, axes = plt.subplots(1, len(crops), figsize=(6 * len(crops), 4))
+        if len(crops) == 1:
+            axes = [axes]
+        for i, crop in enumerate(crops):
+            axes[i].imshow(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+            axes[i].axis("off")
+            axes[i].set_title(f"Line {i}")
+        plt.tight_layout()
+        plt.show()
+
+    # Recognize text
+    results = recognize_text(crops, rec_model)
+
+    print("\n" + "-" * 50)
+    print("OCR RECOGNITION")
+    print("-" * 50)
+
+    outputs = []
+    for meta, rec in zip(metadata, results):
+        if rec["text"] and rec["score"] >= REC_MIN_SCORE:
+            outputs.append({
+                "line": meta["line"],
+                "text": rec["text"],
+                "det_score": meta["det_score"],
+                "rec_score": rec["score"],
+                "polygon": meta["polygon"],
+            })
+            print(f"Line {meta['line']}: '{rec['text']}' | DET={meta['det_score']:.4f} | REC={rec['score']:.4f}")
+
+    print("\n" + "-" * 50)
+    print("FINAL PLATE TEXT")
+    print("-" * 50)
+    final_text = " ".join(r["text"] for r in outputs)
+    print(final_text if final_text else "No recognized text.")
+
+    return outputs
+
+
+# ============================================================
+# VISUALIZATION
+# ============================================================
+
+def draw_plate_detections(image, detections, show=True):
+    """Draw plate detection boxes.
+
+    Args:
+        image: Input image
+        detections: List of detections
+        show: Whether to display
+
+    Returns:
+        Annotated image
+    """
+    vis = image.copy()
+
+    for det in detections:
+        x1, y1, x2, y2 = det["box"]
+        score = det["score"]
+
+        cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 0), 3)
+        label = f"plate {score:.2f}"
+        cv2.putText(vis, label, (x1, max(25, y1 - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+
+    if show:
+        plt.figure(figsize=(14, 8))
+        plt.imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+        plt.axis("off")
+        plt.title("YOLO Plate Detection")
+        plt.show()
+
+    return vis
+
+
+def draw_ocr_detections(image, detections, show=True):
+    """Draw OCR detection boxes.
+
+    Args:
+        image: Input image
+        detections: List of detections
+        show: Whether to display
+
+    Returns:
+        Annotated image
+    """
+    vis = image.copy()
+
+    for i, item in enumerate(detections):
+        poly = np.asarray(item["polygon"], dtype=np.int32)
+        cv2.polylines(vis, [poly], True, (255, 0, 0), 2)
+
+        x = int(np.min(poly[:, 0]))
+        y = int(np.min(poly[:, 1]))
+        cv2.putText(vis, f"{i}: {item['score']:.2f}", (x, max(20, y - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2, cv2.LINE_AA)
+
+    if show:
+        plt.figure(figsize=(14, 6))
+        plt.imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+        plt.axis("off")
+        plt.title("PP-OCRv6_small_det")
+        plt.show()
+
+    return vis
+
+
+def draw_final_results(plate, ocr_results, show=True):
+    """Draw final OCR results on plate.
+
+    Args:
+        plate: Plate image (upscaled)
+        ocr_results: List of OCR results
+        show: Whether to display
+
+    Returns:
+        Annotated image
+    """
+    vis = plate.copy()
+
+    for r in ocr_results:
+        poly = np.asarray(r["polygon"], dtype=np.int32)
+
+        # Draw box
+        cv2.polylines(vis, [poly], True, (0, 0, 255), 2)
+
+        # Draw text
+        x = int(np.min(poly[:, 0]))
+        y = int(np.max(poly[:, 1])) + 30
+        cv2.putText(vis, r["text"], (x, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2, cv2.LINE_AA)
+
+    if show:
+        plt.figure(figsize=(12, 4))
+        plt.imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+        plt.axis("off")
+        plt.title("Final OCR Results")
+        plt.show()
+
+    return vis
+
+
+# ============================================================
+# PROCESSING
+# ============================================================
+
+def process_image(image_path, plate_model, det_model, rec_model, visualize=True):
+    """Process a single image.
+
+    Args:
+        image_path: Path to image
+        plate_model: YOLO plate model
+        det_model: PaddleOCR text detector
+        rec_model: PaddleOCR text recognizer
+        visualize: Whether to show visualizations
+
+    Returns:
+        List of processing results
+    """
+    print("\n" + "=" * 70)
+    print(f"IMAGE: {os.path.basename(image_path)}")
+    print("=" * 70)
+
+    image = cv2.imread(image_path)
+    if image is None:
+        raise RuntimeError(f"Cannot read image: {image_path}")
+
+    print(f"Image shape: {image.shape}")
+
+    # YOLO detection
+    print(f"\nRunning YOLO on GPU {get_device_config()[0]}...")
+    plates = detect_plates(image, plate_model)
+    print(f"\nYOLO detected plates: {len(plates)}")
+
+    if not plates:
+        print("YOLO did not detect any plate.")
+        if visualize:
+            plt.figure(figsize=(14, 8))
+            plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            plt.axis("off")
+            plt.title("YOLO - NO PLATE DETECTED")
+            plt.show()
+        return []
+
+    if visualize:
+        draw_plate_detections(image, plates)
+
+    all_results = []
+
+    for plate_idx, plate_det in enumerate(plates):
+        print(f"\n{'#' * 60}")
+        print(f"PLATE {plate_idx}")
+        print(f"{'#' * 60}")
+        print(f"YOLO confidence: {plate_det['score']:.4f}")
+        print(f"YOLO class: {plate_det['class_name']}")
+        print(f"YOLO box: {plate_det['box']}")
+
+        # Crop plate
+        plate = crop_plate(image, plate_det['box'], padding=0.05)
+        if plate is None:
+            print("Plate crop failed.")
+            continue
+
+        print(f"Plate crop shape: {plate.shape}")
+
+        if visualize:
+            plt.figure(figsize=(10, 5))
+            plt.imshow(cv2.cvtColor(plate, cv2.COLOR_BGR2RGB))
+            plt.axis("off")
+            plt.title(f"YOLO Plate Crop {plate_idx}")
+            plt.show()
+
+        # Run OCR
+        print(f"\nRunning PaddleOCR on {get_device_config()[1]}...")
+        ocr_results = ocr_plate(plate, det_model, rec_model, visualize=visualize)
+
+        all_results.append({
+            "plate_index": plate_idx,
+            "yolo": plate_det,
+            "ocr": ocr_results
+        })
+
+    return all_results
+
+
+def process_video(video_path, output_path, plate_model, det_model, rec_model):
+    """Process video file.
+
+    Args:
+        video_path: Path to input video
+        output_path: Path to save output video (optional)
+        plate_model: YOLO plate model
+        det_model: PaddleOCR text detector
+        rec_model: PaddleOCR text recognizer
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open video: {video_path}")
+
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+
+    print(f"\nVideo: {width}x{height} @ {fps} FPS")
+
+    writer = None
+    if output_path:
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        print(f"Output will be saved to: {output_path}")
+
+    frame_count = 0
+    total_plates = 0
+
+    print("\n" + "=" * 70)
+    print("PROCESSING VIDEO")
+    print("=" * 70)
+
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+
+        frame_count += 1
+
+        # Detect plates
+        plates = detect_plates(frame, plate_model, visualize=False)
+
+        for plate_det in plates:
+            x1, y1, x2, y2 = plate_det["box"]
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
+
+            # Crop and OCR
+            plate = crop_plate(frame, plate_det['box'], padding=0.05)
+            if plate is not None:
+                plate_up, detections = detect_text(plate, det_model, visualize=False)
+
+                if detections:
+                    # Crop and recognize
+                    crops = []
+                    metadata = []
+                    for item in detections:
+                        crop = crop_polygon(plate_up, item["polygon"], padding=TEXT_PADDING)
+                        if crop is not None:
+                            crop = cv2.copyMakeBorder(crop, 10, 10, 10, 10,
+                                                      cv2.BORDER_CONSTANT, value=(255, 255, 255))
+                            crops.append(crop)
+                            metadata.append(item)
+
+                    if crops:
+                        results = recognize_text(crops, rec_model)
+                        for meta, rec in zip(metadata, results):
+                            if rec["text"]:
+                                # Draw text on frame
+                                text_x = x1 + int(np.min(meta["polygon"][:, 0]) / OCR_UPSCALE)
+                                text_y = y2
+                                cv2.putText(frame, rec["text"], (text_x, text_y),
+                                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                                total_plates += 1
+
+        # Add frame info
+        cv2.putText(frame, f"Frame: {frame_count}", (10, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(frame, f"Plates: {len(plates)}", (10, 60),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+        if writer:
+            writer.write(frame)
+
+        # Display
+        cv2.imshow("LPR Test", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    if writer:
+        writer.release()
+    cv2.destroyAllWindows()
+
+    print("\n" + "=" * 70)
+    print("VIDEO PROCESSING COMPLETE")
+    print("=" * 70)
+    print(f"Total frames: {frame_count}")
+    print(f"Total plates detected: {total_plates}")
+    print(f"Average plates/frame: {total_plates / max(frame_count, 1):.2f}")
+
+
+def process_camera(plate_model, det_model, rec_model):
+    """Process camera feed.
+
+    Args:
+        plate_model: YOLO plate model
+        det_model: PaddleOCR text detector
+        rec_model: PaddleOCR text recognizer
+    """
+    camera_source = int(os.getenv("CAMERA_SOURCE", "0"))
+    cap = cv2.VideoCapture(camera_source)
+
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open camera: {camera_source}")
+
+    print(f"\nCamera opened: {camera_source}")
+
+    frame_count = 0
+
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            print("Frame read failed, retrying...")
+            continue
+
+        frame_count += 1
+
+        # Detect plates
+        plates = detect_plates(frame, plate_model, visualize=False)
+
+        for plate_det in plates:
+            x1, y1, x2, y2 = plate_det["box"]
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
+
+            # Crop and OCR
+            plate = crop_plate(frame, plate_det['box'], padding=0.05)
+            if plate is not None:
+                plate_up, detections = detect_text(plate, det_model, visualize=False)
+
+                if detections:
+                    crops = []
+                    metadata = []
+                    for item in detections:
+                        crop = crop_polygon(plate_up, item["polygon"], padding=TEXT_PADDING)
+                        if crop is not None:
+                            crop = cv2.copyMakeBorder(crop, 10, 10, 10, 10,
+                                                      cv2.BORDER_CONSTANT, value=(255, 255, 255))
+                            crops.append(crop)
+                            metadata.append(item)
+
+                    if crops:
+                        results = recognize_text(crops, rec_model)
+                        for meta, rec in zip(metadata, results):
+                            if rec["text"]:
+                                text_x = x1 + int(np.min(meta["polygon"][:, 0]) / OCR_UPSCALE)
+                                text_y = y2
+                                cv2.putText(frame, rec["text"], (text_x, text_y),
+                                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+        # Info overlay
+        cv2.putText(frame, f"Frame: {frame_count}", (10, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(frame, f"Plates: {len(plates)}", (10, 60),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+        cv2.imshow("LPR Camera Test", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+# ============================================================
+# MAIN
+# ============================================================
 
 def main():
-    """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Test LPR models on video or camera"
-    )
-    parser.add_argument(
-        "--video", "-v",
-        type=str,
-        default=None,
-        help="Path to input video file"
-    )
-    parser.add_argument(
-        "--output", "-o",
-        type=str,
-        default=None,
-        help="Path to output video file"
-    )
-    parser.add_argument(
-        "--yolo", "-y",
-        type=str,
-        default="/models/plate_detector/Plate.pt",
-        help="Path to YOLO model"
-    )
-    parser.add_argument(
-        "--device", "-d",
-        type=str,
-        default="cpu",
-        help="Device for PaddleOCR (gpu:0, cpu)"
-    )
-    parser.add_argument(
-        "--conf",
-        type=float,
-        default=0.25,
-        help="YOLO confidence threshold"
-    )
-    parser.add_argument(
-        "--iou",
-        type=float,
-        default=0.45,
-        help="YOLO IoU threshold"
-    )
-    parser.add_argument(
-        "--upscale", "-u",
-        type=int,
-        default=4,
-        help="OCR upscale factor"
-    )
-    parser.add_argument(
-        "--no-stages",
-        action="store_true",
-        help="Don't show intermediate stages"
-    )
-    parser.add_argument(
-        "--save-frames",
-        action="store_true",
-        help="Save individual frames on 's' key"
-    )
-    parser.add_argument(
-        "--camera", "-c",
-        type=int,
-        default=0,
-        help="Camera device ID (use with --camera flag)"
-    )
-    parser.add_argument(
-        "--verify",
-        action="store_true",
-        help="Verify GPU setup only"
-    )
+    parser = argparse.ArgumentParser(description="LPR Model Testing Tool")
+    parser.add_argument("--video", type=str, help="Path to test video")
+    parser.add_argument("--output", type=str, help="Path to save output video")
+    parser.add_argument("--image", type=str, help="Path to test image")
+    parser.add_argument("--camera", action="store_true", help="Use camera")
+    parser.add_argument("--no-visualize", action="store_true", help="Disable visualizations")
+    parser.add_argument("--yolo-model", type=str, default=DEFAULT_YOLO_MODEL_PATH,
+                       help="Path to YOLO model")
+    parser.add_argument("--paddle-model-dir", type=str, default=DEFAULT_PADDLE_MODEL_DIR,
+                       help="Directory containing PaddleOCR models")
 
     args = parser.parse_args()
 
-    # Verify GPU if requested
-    if args.verify:
-        verify_gpu()
-        return
+    # Update global paths
+    global DEFAULT_YOLO_MODEL_PATH, DEFAULT_PADDLE_MODEL_DIR
+    DEFAULT_YOLO_MODEL_PATH = args.yolo_model
+    DEFAULT_PADDLE_MODEL_DIR = args.paddle_model_dir
 
-    # Resolve YOLO path
-    if not os.path.isabs(args.yolo):
-        # Relative to script location
-        script_dir = Path(__file__).parent.parent
-        yolo_path = script_dir / args.yolo
-    else:
-        yolo_path = Path(args.yolo)
+    visualize = not args.no_visualize
 
-    if not yolo_path.exists():
-        logger.error(f"YOLO model not found: {yolo_path}")
-        return
-
-    # Create tester
-    tester = ModelTester(
-        yolo_path=str(yolo_path),
-        paddle_device=args.device,
-        yolo_conf=args.conf,
-        yolo_iou=args.iou,
-        upscale=args.upscale,
-        show_stages=not args.no_stages,
-    )
+    # Print device info
+    print_device_info()
 
     # Load models
-    tester.load_models()
+    plate_model, det_model, rec_model = load_models()
 
-    # Run inference
-    if args.video:
-        tester.run_on_video(
-            video_path=args.video,
-            output_path=args.output,
-            save_frames=args.save_frames,
-        )
+    # Process based on input type
+    if args.image:
+        process_image(args.image, plate_model, det_model, rec_model, visualize=visualize)
+    elif args.video:
+        process_video(args.video, args.output, plate_model, det_model, rec_model)
+    elif args.camera:
+        process_camera(plate_model, det_model, rec_model)
     else:
-        tester.run_on_camera(camera_id=args.camera)
+        # Try to find test image
+        test_image = os.path.join(DEFAULT_IMG_DIR, "CarLongPlate0_jpg.rf.e861e8ff15501637fc82e10ffb5299c0.jpg")
+        if os.path.exists(test_image):
+            process_image(test_image, plate_model, det_model, rec_model, visualize=visualize)
+        else:
+            print("\nNo input specified. Available options:")
+            print("  --image <path>    Process single image")
+            print("  --video <path>     Process video file")
+            print("  --camera           Use camera feed")
+            print("\nOr specify path to test image:")
+            print(f"  python scripts/test_models.py --image {test_image}")
 
 
 if __name__ == "__main__":
