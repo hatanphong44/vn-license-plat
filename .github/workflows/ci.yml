@@ -39,7 +39,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install numpy>=1.24.0 requests>=2.31.0
+          pip install numpy>=1.24.0 requests>=2.31.0 opencv-python-headless>=4.8.0
           pip install pytest pytest-asyncio pytest-cov --quiet
 
       - name: Run pytest
@@ -59,7 +59,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install numpy>=1.24.0 requests>=2.31.0
+          pip install numpy>=1.24.0 requests>=2.31.0 opencv-python-headless>=4.8.0
           pip install pytest pytest-asyncio pytest-cov --quiet
 
       - name: Run pytest with coverage
