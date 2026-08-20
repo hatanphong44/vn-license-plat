@@ -55,6 +55,9 @@ class USBCamera(CameraBase):
             self._cap = None
             return False
 
+        # Set MJPG format to fix color issue (some cameras default to YUV)
+        self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+
         # Configure buffer
         self._cap.set(cv2.CAP_PROP_BUFFERSIZE, self._buffer_size)
 

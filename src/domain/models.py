@@ -83,6 +83,7 @@ class CapturedPlate:
     ocr_results: list[TextRecognition]
     frame: np.ndarray | None = None
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+    frames_count: int = 0  # Number of frames used to collect this result
 
 
 @dataclass

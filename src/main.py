@@ -5,6 +5,8 @@ Usage:
     uvicorn src.main:app --host 0.0.0.0 --port 8000
 """
 
+from __future__ import annotations
+
 import os
 import sys
 
@@ -69,6 +71,7 @@ def create_runtime(
     plate_detector,
     text_detector,
     text_recognizer,
+    preview: bool = False,
 ) -> LPRRuntimeWorker:
     """Create and configure the runtime worker.
 
@@ -77,6 +80,7 @@ def create_runtime(
         plate_detector: Plate detection model
         text_detector: Text detection model
         text_recognizer: Text recognition model
+        preview: Enable camera preview window
 
     Returns:
         Configured runtime worker
@@ -119,20 +123,85 @@ def create_runtime(
         max_frames=settings.runtime.MAX_CAPTURE_FRAMES,
         max_wait_seconds=settings.runtime.MAX_CAPTURE_WAIT_SECONDS,
         cooldown_seconds=settings.runtime.PLATE_COOLDOWN_SECONDS,
+        preview=preview,
     )
 
+    # Create overlay renderer for preview
+    overlay = None
+    if preview:
+        from src.visualization import create_overlay_renderer
+        overlay = create_overlay_renderer(
+            enabled=True,
+            display_fps=True,
+            window_name="LPR Camera Preview (q to quit)",
+            headless=True,  # Use headless mode (save frames to disk)
+            save_dir="captures",
+            save_interval_seconds=5,  # Save frame every 5 seconds
+        )
+
     # Create runtime worker
-    return LPRRuntimeWorker(
+    worker = LPRRuntimeWorker(
         camera=camera,
         pipeline=pipeline,
         publisher=publisher,
         config=worker_config,
+        overlay=overlay,
     )
 
+    # Start overlay renderer if preview enabled
+    if overlay is not None:
+        overlay.start()
+
+    return worker
 
 
-def run_runtime():
-    """Run the LPR runtime."""
+
+# Lazy app initialization for uvicorn
+_app: FastAPI | None = None
+
+
+def get_app() -> FastAPI:
+    """Get or create FastAPI application (lazy initialization).
+
+    This function is used by uvicorn when running:
+        uvicorn src.main:app --host 0.0.0.0 --port 8000
+
+    Returns:
+        FastAPI app instance with pipeline configured
+    """
+    global _app
+    if _app is None:
+        from src.api import create_app
+
+        # Load models for pipeline
+        settings = get_settings()
+        setup_logging(level="INFO")
+
+        plate_detector, text_detector, text_recognizer = load_models(settings)
+
+        # Create pipeline
+        pipeline = create_pipeline(
+            plate_detector=plate_detector,
+            text_detector=text_detector,
+            text_recognizer=text_recognizer,
+        )
+
+        # Create app with pipeline
+        _app = create_app(pipeline=pipeline)
+
+    return _app
+
+
+# Module-level app for uvicorn: uvicorn src.main:app
+app = get_app()
+
+
+def run_runtime(preview: bool = False):
+    """Run the LPR runtime.
+
+    Args:
+        preview: Enable camera preview window
+    """
     # Setup logging
     settings = get_settings()
     setup_logging(
@@ -147,6 +216,7 @@ def run_runtime():
     logger.info("LPR Runtime starting")
     logger.info(f"Camera: {settings.camera.CAMERA_SOURCE}")
     logger.info(f"Inference FPS: {settings.camera.INFERENCE_FPS}")
+    logger.info(f"Preview: {'ENABLED' if preview else 'disabled'}")
     logger.info(f"Callback URL: {settings.events.CALLBACK_URL or '(not configured)'}")
     logger.info("=" * 70)
 
@@ -160,6 +230,7 @@ def run_runtime():
             plate_detector=plate_detector,
             text_detector=text_detector,
             text_recognizer=text_recognizer,
+            preview=preview,
         )
 
         # Start runtime
@@ -167,6 +238,8 @@ def run_runtime():
 
         # Keep main thread alive
         logger.info("Runtime started. Press Ctrl+C to stop.")
+        if preview:
+            logger.info("Preview window open: Press 'q' in window or Ctrl+C to quit.")
         while True:
             import time
             time.sleep(1)
@@ -210,9 +283,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LPR Runtime")
     parser.add_argument("--mode", choices=["runtime", "api"], default="runtime",
                        help="Run mode: runtime (default) or api")
+    parser.add_argument("--preview", action="store_true",
+                       help="Enable camera preview window")
     args = parser.parse_args()
 
     if args.mode == "api":
         run_api()
     else:
-        run_runtime()
+        run_runtime(preview=args.preview)

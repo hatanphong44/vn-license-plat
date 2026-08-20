@@ -2,12 +2,14 @@
 
 Responsibilities (per PLAN.md):
 - /health, /ready, /metrics, optional /predict
-- No camera loop
+- Camera runtime control via /start-runtime, /stop-runtime
 """
 
 import logging
+import threading
 import time
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
@@ -16,6 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.pipeline.lpr_pipeline import LPRPipeline
 from src.runtime.controller import RuntimeController, get_controller
+
+if TYPE_CHECKING:
+    from src.camera import CameraBase
+    from src.runtime import LPRRuntimeWorker
 
 logger = logging.getLogger("lpr.api")
 
@@ -43,6 +49,9 @@ def create_app(
     app.state.controller = controller or get_controller()
     app.state.pipeline = pipeline
     app.state.start_time = time.time()
+    app.state.camera = None
+    app.state.worker = None
+    app.state.runtime_thread = None
 
     # CORS middleware
     app.add_middleware(
@@ -75,11 +84,13 @@ def register_routes(app: FastAPI) -> None:
         """Readiness check endpoint."""
         controller = app.state.controller
         runtime_ready = controller.is_running
+        camera = getattr(app.state, "camera", None)
+        camera_source = camera.source if camera else None
 
         return {
             "status": "ready" if runtime_ready else "starting",
             "runtime_running": runtime_ready,
-            "camera_source": None,  # Would need camera ref
+            "camera_source": camera_source,
             "models": {
                 "plate_detection": "loaded",
                 "ocr_detection": "loaded",
@@ -162,20 +173,145 @@ def register_routes(app: FastAPI) -> None:
             "count": len(results),
         }
 
-    @app.post("/stop")
-    def stop():
-        """Stop the runtime."""
+    @app.post("/start-runtime")
+    def start_runtime():
+        """Start the camera runtime for continuous plate detection.
+
+        This endpoint starts the camera and begins the continuous
+        plate detection loop in a background thread.
+        """
+        from src.camera import create_camera
+        from src.config import get_settings
+        from src.events import create_http_publisher
+        from src.runtime import LPRRuntimeWorker, WorkerConfig
+
         controller = app.state.controller
-        controller.stop()
-        return {"status": "stopped"}
+
+        if controller.is_running:
+            return {
+                "status": "already_running",
+                "message": "Runtime is already running",
+                "camera_source": app.state.camera.source if app.state.camera else None,
+            }
+
+        try:
+            settings = get_settings()
+
+            # Create camera
+            camera = create_camera(
+                source=settings.camera.CAMERA_SOURCE,
+                buffer_size=settings.camera.CAMERA_BUFFER_SIZE,
+                timeout=settings.camera.CAMERA_CONNECT_TIMEOUT,
+                reconnect_delay=settings.camera.CAMERA_RECONNECT_DELAY,
+            )
+
+            # Test camera connection
+            if not camera.connect():
+                camera.disconnect()
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Cannot connect to camera: {settings.camera.CAMERA_SOURCE}",
+                )
+
+            # Store camera reference
+            app.state.camera = camera
+
+            # Create event publisher
+            publisher = create_http_publisher(
+                url=settings.events.CALLBACK_URL,
+                timeout=settings.events.CALLBACK_TIMEOUT,
+                retry_count=settings.events.CALLBACK_RETRY_COUNT,
+                retry_delay=settings.events.CALLBACK_RETRY_DELAY,
+            )
+
+            # Create worker config
+            worker_config = WorkerConfig(
+                inference_fps=settings.camera.INFERENCE_FPS,
+                reconnect_delay=settings.camera.CAMERA_RECONNECT_DELAY,
+                max_frames=settings.runtime.MAX_CAPTURE_FRAMES,
+                max_wait_seconds=settings.runtime.MAX_CAPTURE_WAIT_SECONDS,
+                cooldown_seconds=settings.runtime.PLATE_COOLDOWN_SECONDS,
+            )
+
+            # Create worker
+            pipeline = app.state.pipeline
+            worker = LPRRuntimeWorker(
+                camera=camera,
+                pipeline=pipeline,
+                publisher=publisher,
+                config=worker_config,
+            )
+
+            app.state.worker = worker
+
+            # Start worker in background thread
+            def runtime_loop():
+                try:
+                    worker.start()
+                except Exception as e:
+                    logger.error(f"Runtime error: {e}")
+
+            runtime_thread = threading.Thread(target=runtime_loop, daemon=True)
+            runtime_thread.start()
+            app.state.runtime_thread = runtime_thread
+
+            logger.info("Camera runtime started")
+            return {
+                "status": "started",
+                "message": "Camera runtime started successfully",
+                "camera_source": camera.source,
+                "inference_fps": settings.camera.INFERENCE_FPS,
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to start runtime: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to start runtime: {str(e)}",
+            )
+
+    @app.post("/stop-runtime")
+    def stop_runtime():
+        """Stop the camera runtime."""
+        controller = app.state.controller
+
+        if not controller.is_running:
+            return {
+                "status": "not_running",
+                "message": "Runtime is not running",
+            }
+
+        try:
+            controller.stop()
+            if app.state.camera:
+                app.state.camera.disconnect()
+            app.state.camera = None
+            app.state.worker = None
+            app.state.runtime_thread = None
+
+            logger.info("Camera runtime stopped")
+            return {
+                "status": "stopped",
+                "message": "Camera runtime stopped",
+            }
+        except Exception as e:
+            logger.error(f"Failed to stop runtime: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to stop runtime: {str(e)}",
+            )
 
     @app.post("/start")
     def start():
-        """Check runtime status."""
-        controller = app.state.controller
-        return {
-            "running": controller.is_running,
-        }
+        """Alias for /start-runtime for backward compatibility."""
+        return start_runtime()
+
+    @app.post("/stop")
+    def stop():
+        """Alias for /stop-runtime for backward compatibility."""
+        return stop_runtime()
 
 
 # Application instance
