@@ -56,8 +56,6 @@ class RuntimeStats:
 
         # Inference
         self.inference_cycles: int = 0
-        self.inference_skipped: int = 0
-        self.throttle_ms: float = 0.0
 
         # Models
         self.yolo = ModelStats("YOLO plate detector")
@@ -73,11 +71,11 @@ class RuntimeStats:
         self.plates_detected: int = 0
         self.ocr_results: int = 0
 
-        # Collector
-        self.collections_started: int = 0
-        self.collections_completed: int = 0
-        self.collections_timeout: int = 0
-        self.avg_collection_size: float = 0.0
+        # Windows
+        self.windows_completed: int = 0
+        self.windows_with_result: int = 0
+        self.windows_published: int = 0
+        self.windows_skipped: int = 0
 
         # Events
         self.events_published: int = 0
@@ -143,10 +141,8 @@ class DebugProfiler:
         self._current_inference_start = time.time()
 
     def inference_skipped(self) -> None:
-        """Record skipped inference due to throttle."""
-        if not self._enabled:
-            return
-        self._stats.inference_skipped += 1
+        """Record skipped inference due to throttle (deprecated - no longer used)."""
+        pass  # No longer used
 
     def yolo_call(self, duration_ms: float) -> None:
         """Record YOLO inference time."""
@@ -183,22 +179,59 @@ class DebugProfiler:
         self._stats.ocr_results += 1
 
     def collection_started(self) -> None:
-        """Record a new collection started."""
-        if not self._enabled:
-            return
-        self._stats.collections_started += 1
+        """Record a new collection started (deprecated - no longer used)."""
+        pass
 
     def collection_completed(self, size: int, timeout: bool = False) -> None:
-        """Record a collection completed."""
+        """Record a collection completed (deprecated - no longer used)."""
+        pass
+
+    def window_finalized(self, window_id: int) -> None:
+        """Record a window finalized."""
         if not self._enabled:
             return
-        self._stats.collections_completed += 1
-        if timeout:
-            self._stats.collections_timeout += 1
-        # Update running average
-        n = self._stats.collections_completed
-        old_avg = self._stats.avg_collection_size
-        self._stats.avg_collection_size = old_avg + (size - old_avg) / n
+        self._stats.windows_completed += 1
+
+    def log_window_result(self, window_result, previous_result: str | None) -> None:
+        """Log window result summary."""
+        if not self._enabled:
+            return
+
+        stats = self._stats
+        stats.windows_completed += 1
+
+        if window_result.action == "PUBLISH":
+            stats.windows_published += 1
+            stats.windows_with_result += 1
+        elif window_result.action == "SKIP_DUPLICATE":
+            stats.windows_skipped += 1
+            stats.windows_with_result += 1
+        # NO_CONFIDENT_RESULT doesn't count as windows_with_result
+
+        # Format: [WINDOW] id=... duration=... observations=... valid_observations=... invalid_observations=... result=... confidence=... previous_result=... action=...
+        logger.info("")
+        logger.info("[WINDOW]")
+        logger.info(f"id={window_result.window_id}")
+        logger.info(f"duration={window_result.duration:.2f}s")
+        logger.info(f"observations={window_result.observations}")
+        logger.info(f"valid_observations={window_result.valid_observations}")
+        logger.info(f"invalid_observations={window_result.invalid_observations}")
+
+        # Log candidates with counts
+        if window_result.candidate_counts:
+            logger.info("candidates:")
+            for plate, count in sorted(window_result.candidate_counts.items(), key=lambda x: -x[1]):
+                logger.info(f"  {plate}: count={count}")
+
+        if window_result.result:
+            logger.info(f"result={window_result.result}")
+            if window_result.confidence:
+                logger.info(f"confidence={window_result.confidence:.3f}")
+        else:
+            logger.info("result=None")
+
+        logger.info(f"previous_result={previous_result or 'None'}")
+        logger.info(f"action={window_result.action}")
 
     def event_published(self, latency_ms: float, success: bool) -> None:
         """Record an event publish."""
@@ -217,7 +250,8 @@ class DebugProfiler:
         elapsed = time.time() - self._stats._last_summary_time
         return elapsed >= self.SUMMARY_INTERVAL
 
-    def print_summary(self, configured_fps: float = 5.0) -> None:
+    def print_summary(self, actual_fps: float = 0.0, window_duration: float = 0.0,
+                     observations: int = 0) -> None:
         """Print performance summary."""
         if not self._enabled:
             return
@@ -226,95 +260,27 @@ class DebugProfiler:
         stats.runtime_seconds = time.time() - self._runtime_start
         stats._last_summary_time = time.time()
 
-        # Calculate effective FPS
-        total_frames = stats.inference_cycles + stats.inference_skipped
-        effective_fps = total_frames / stats.runtime_seconds if stats.runtime_seconds > 0 else 0
+        # Calculate averages
+        yolo_ms = stats.yolo.avg_ms if stats.yolo.calls > 0 else 0.0
+        ocr_det_ms = stats.ocr_det.avg_ms if stats.ocr_det.calls > 0 else 0.0
+        ocr_rec_ms = stats.ocr_rec.avg_ms if stats.ocr_rec.calls > 0 else 0.0
+        pipeline_ms = stats.pipeline_total_ms / max(1, stats.pipeline_calls)
 
-        # Find bottleneck
-        bottleneck = self._find_bottleneck()
-
-        # Determine slow stages
-        slow_stages = []
-        if stats.yolo.avg_ms > self.SLOW_YOLO:
-            slow_stages.append(f"YOLO={stats.yolo.avg_ms:.0f}ms")
-        if stats.ocr_det.avg_ms > self.SLOW_OCR_DET:
-            slow_stages.append(f"OCR_det={stats.ocr_det.avg_ms:.0f}ms")
-        if stats.ocr_rec.avg_ms > self.SLOW_OCR_REC:
-            slow_stages.append(f"OCR_rec={stats.ocr_rec.avg_ms:.0f}ms")
-        if stats.pipeline_total_ms / max(1, stats.pipeline_calls) > self.SLOW_PIPELINE:
-            slow_stages.append(f"pipeline={stats.pipeline_total_ms / max(1, stats.pipeline_calls):.0f}ms")
-
-        # Print summary
+        # Format: [PERF] key=value key=value ...
         logger.info("")
-        logger.info("=" * 56)
-        logger.info(f"  PERFORMANCE SUMMARY | runtime={stats.runtime_seconds:.1f}s")
-        logger.info("=" * 56)
-        logger.info("")
-
-        # Camera
-        logger.info("  Camera")
-        logger.info(f"    frames: {stats.camera_frames}")
-        if stats.camera_errors > 0:
-            logger.info(f"    errors: {stats.camera_errors}  [WARN]")
-        logger.info("")
-
-        # Runtime
-        logger.info("  Runtime")
-        logger.info(f"    configured FPS: {configured_fps}")
-        logger.info(f"    effective FPS: {effective_fps:.1f}")
-        logger.info(f"    inference cycles: {stats.inference_cycles}")
-        if stats.inference_skipped > 0:
-            logger.info(f"    skipped (throttle): {stats.inference_skipped}")
-        logger.info("")
-
-        # Models
-        logger.info("  Models")
-        if stats.yolo.calls > 0:
-            logger.info(f"    YOLO plate:       {stats.yolo.avg_ms:5.0f} ms avg  max={stats.yolo.max_ms:.0f} ms  ({stats.yolo.calls} calls)")
-        if stats.ocr_det.calls > 0:
-            logger.info(f"    OCR detection:    {stats.ocr_det.avg_ms:5.0f} ms avg  max={stats.ocr_det.max_ms:.0f} ms  ({stats.ocr_det.calls} calls)")
-        if stats.ocr_rec.calls > 0:
-            logger.info(f"    OCR recognition:  {stats.ocr_rec.avg_ms:5.0f} ms avg  max={stats.ocr_rec.max_ms:.0f} ms  ({stats.ocr_rec.calls} calls)")
-        logger.info("")
-
-        # Pipeline
-        if stats.pipeline_calls > 0:
-            avg_pipeline = stats.pipeline_total_ms / stats.pipeline_calls
-            logger.info("  Pipeline")
-            logger.info(f"    avg: {avg_pipeline:.0f} ms  max={stats.pipeline_max_ms:.0f} ms")
-            logger.info(f"    plates detected: {stats.plates_detected}")
-            logger.info("")
-
-        # Collector
-        if stats.collections_started > 0:
-            logger.info("  Collector")
-            logger.info(f"    active: {stats.collections_started - stats.collections_completed}")
-            logger.info(f"    completed: {stats.collections_completed}")
-            if stats.collections_timeout > 0:
-                logger.info(f"    timeout: {stats.collections_timeout}  [WARN]")
-            logger.info("")
-
-        # Events
-        if stats.events_published > 0 or stats.events_failed > 0:
-            logger.info("  Events")
-            logger.info(f"    published: {stats.events_published}")
-            if stats.events_failed > 0:
-                logger.info(f"    failed: {stats.events_failed}  [WARN]")
-            logger.info("")
-
-        # Bottleneck
-        if bottleneck:
-            logger.info(f"  [BOTTLENECK] {bottleneck}")
-        elif slow_stages:
-            logger.info(f"  [SLOW] {', '.join(slow_stages)}")
-
-        logger.info("")
-        logger.info("=" * 56)
+        logger.info("[PERF]")
+        logger.info(f"actual_inference_fps={actual_fps:.1f}")
+        logger.info(f"inference_cycles={stats.inference_cycles}")
+        logger.info(f"window_elapsed={window_duration:.2f}s")
+        logger.info(f"observations={observations}")
+        logger.info(f"yolo_ms={yolo_ms:.0f}")
+        logger.info(f"ocr_det_ms={ocr_det_ms:.0f}")
+        logger.info(f"ocr_rec_ms={ocr_rec_ms:.0f}")
+        logger.info(f"pipeline_ms={pipeline_ms:.0f}")
 
         # Reset delta counters (keep totals for next interval)
         stats.camera_frames = 0
         stats.camera_errors = 0
-        stats.inference_skipped = 0
 
     def _find_bottleneck(self) -> str:
         """Identify the main bottleneck."""
@@ -344,19 +310,23 @@ class DebugProfiler:
         logger.debug(f"Collection completed: obs={observations} plate={plate} conf={confidence:.3f}")
 
     def log_event_published(self, plate: str, frames: int, confidence: float,
-                          publish_success: bool, latency_ms: float) -> None:
+                          publish_success: bool, latency_ms: float,
+                          window_duration: float = 0.0) -> None:
         """Log a single event publish."""
         if not self._enabled:
             return
         status = "success" if publish_success else "failed"
-        logger.debug(f"Event: plate={plate} frames={frames} conf={confidence:.3f} "
-                    f"publish={status} latency={latency_ms:.1f}ms")
+        logger.info("")
+        logger.info("[EVENT]")
+        logger.info(f"plate={plate}")
+        logger.info(f"confidence={confidence:.3f}")
+        logger.info(f"window_duration={window_duration:.2f}s")
+        logger.info(f"status={status}")
+        logger.info(f"latency_ms={latency_ms:.1f}")
 
     def warn_collection_timeout(self, duration: float) -> None:
-        """Warn about collection timeout."""
-        if not self._enabled:
-            return
-        logger.warning(f"Collection timeout: duration={duration:.1f}s")
+        """Warn about collection timeout (deprecated - no longer used)."""
+        pass
 
     def reset(self) -> None:
         """Reset all stats."""

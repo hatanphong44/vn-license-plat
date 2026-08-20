@@ -120,10 +120,8 @@ def _log_debug_startup(logger, settings: Settings, debug: bool) -> None:
 
     # Runtime config
     logger.info("  Runtime")
-    logger.info(f"    inference FPS: {settings.camera.INFERENCE_FPS}")
-    logger.info(f"    max frames: {settings.runtime.MAX_CAPTURE_FRAMES}")
-    logger.info(f"    max wait: {settings.runtime.MAX_CAPTURE_WAIT_SECONDS}s")
-    logger.info(f"    cooldown: {settings.runtime.PLATE_COOLDOWN_SECONDS}s")
+    logger.info(f"    result window: 3.0s")
+    logger.info(f"    consensus ratio: 0.3")
     logger.info("")
 
     logger.info("=" * 56)
@@ -167,11 +165,7 @@ def create_runtime(
     )
 
     worker_config = WorkerConfig(
-        inference_fps=settings.camera.INFERENCE_FPS,
         reconnect_delay=settings.camera.CAMERA_RECONNECT_DELAY,
-        max_frames=settings.runtime.MAX_CAPTURE_FRAMES,
-        max_wait_seconds=settings.runtime.MAX_CAPTURE_WAIT_SECONDS,
-        cooldown_seconds=settings.runtime.PLATE_COOLDOWN_SECONDS,
         preview=preview,
     )
 
@@ -258,7 +252,7 @@ def run_runtime(preview: bool = False, debug: bool = False):
     logger.info("=" * 56)
     logger.info("LPR Runtime starting")
     logger.info(f"Camera: {settings.camera.CAMERA_SOURCE}")
-    logger.info(f"Inference FPS: {settings.camera.INFERENCE_FPS}")
+    logger.info(f"Result window: 3.0s (continuous inference)")
     if debug_mode:
         logger.info("DEBUG: enabled")
     logger.info("=" * 56)

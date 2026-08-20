@@ -86,7 +86,7 @@ class LPRPipeline:
 
         profiler.yolo_call(yolo_ms)
 
-        logger.debug(f"Frame: {frame.shape[1]}x{frame.shape[0]}, Plates: {len(plate_detections)}")
+        # Per-frame logging disabled - only summary logging in debug mode
 
         # Step 2-6: Process each plate
         for plate_idx, plate_det in enumerate(plate_detections):
@@ -99,8 +99,7 @@ class LPRPipeline:
 
             if result and result.has_text():
                 results.append(result)
-                logger.debug(f"Detection: plate={result.plate_normalized} "
-                           f"confidence={result.get_confidence():.3f}")
+                # Per-detection logging disabled - only summary logging in debug mode
 
         return results
 
