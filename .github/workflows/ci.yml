@@ -39,7 +39,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e . --quiet
+          pip install numpy>=1.24.0
           pip install pytest pytest-asyncio pytest-cov --quiet
 
       - name: Run pytest
@@ -59,7 +59,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e . --quiet
+          pip install numpy>=1.24.0
           pip install pytest pytest-asyncio pytest-cov --quiet
 
       - name: Run pytest with coverage
