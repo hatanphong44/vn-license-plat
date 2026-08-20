@@ -136,7 +136,6 @@ def create_runtime(
     preview: bool = False,
 ) -> LPRRuntimeWorker:
     """Create and configure the runtime worker."""
-    get_logger("main")
 
     pipeline = create_pipeline(
         plate_detector=plate_detector,
@@ -221,8 +220,14 @@ def get_app() -> FastAPI:
     return _app
 
 
-# Module-level app for uvicorn
-app = get_app()
+# Module-level app for uvicorn - lazy loaded when first accessed
+class _LazyApp:
+    """Lazy wrapper that initializes app on first access."""
+    def __getattr__(self, name):
+        return getattr(get_app(), name)
+
+
+app = _LazyApp()
 
 
 def run_runtime(preview: bool = False, debug: bool = False):
