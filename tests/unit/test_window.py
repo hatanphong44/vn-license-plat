@@ -1,6 +1,5 @@
 """Test window-based LPR runtime logic."""
 
-import pytest
 from collections import Counter
 
 
@@ -16,7 +15,7 @@ class WindowResult:
     """Mock window result for testing."""
     def __init__(self, window_id: int, result: str | None, action: str,
                  valid_observations: int = 0, invalid_observations: int = 0,
-                 candidate_counts: dict = None):
+                 candidate_counts: dict | None = None):
         self.window_id = window_id
         self.result = result
         self.action = action
@@ -193,10 +192,7 @@ class TestDeduplication:
 
         # Simulate dedup logic
         last_published = window1_result
-        if window2_result == last_published:
-            action = "SKIP_DUPLICATE"
-        else:
-            action = "PUBLISH"
+        action = "SKIP_DUPLICATE" if window2_result == last_published else "PUBLISH"
 
         assert action == "SKIP_DUPLICATE"
 
@@ -206,10 +202,7 @@ class TestDeduplication:
         window2_result = "29A12345"
 
         last_published = window1_result
-        if window2_result == last_published:
-            action = "SKIP_DUPLICATE"
-        else:
-            action = "PUBLISH"
+        action = "SKIP_DUPLICATE" if window2_result == last_published else "PUBLISH"
 
         assert action == "PUBLISH"
 
@@ -241,10 +234,7 @@ class TestDeduplication:
 
         # Window 2
         last_published = window2_result if action1 == "PUBLISH" else last_published
-        if window2_result == last_published:
-            action2 = "SKIP_DUPLICATE"
-        else:
-            action2 = "PUBLISH"
+        action2 = "SKIP_DUPLICATE" if window2_result == last_published else "PUBLISH"
 
         assert action1 == "NO_CONFIDENT_RESULT"
         assert action2 == "PUBLISH"
@@ -269,7 +259,7 @@ class TestEndToEndScenario:
 
         for i, obs_list in enumerate(windows, 1):
             observations = [PlateObservation(p) for p in obs_list]
-            result, action = resolve_window(observations)
+            result, _action = resolve_window(observations)
 
             if result is None:
                 final_action = "NO_CONFIDENT_RESULT"
@@ -300,7 +290,7 @@ class TestEndToEndScenario:
                 PlateObservation(p, is_valid=p not in ["038_2CA", "088_2CA"])
                 for p in obs_list
             ]
-            result, action = resolve_window(observations)
+            result, _action = resolve_window(observations)
 
             if result is None:
                 final_action = "NO_CONFIDENT_RESULT"

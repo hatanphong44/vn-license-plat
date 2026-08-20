@@ -9,7 +9,6 @@ import logging
 import threading
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
@@ -18,10 +17,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.pipeline.lpr_pipeline import LPRPipeline
 from src.runtime.controller import RuntimeController, get_controller
-
-if TYPE_CHECKING:
-    from src.camera import CameraBase
-    from src.runtime import LPRRuntimeWorker
 
 logger = logging.getLogger("lpr.api")
 
@@ -266,11 +261,11 @@ def register_routes(app: FastAPI) -> None:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to start runtime: {e}")
+            logger.error(f"Failed to start runtime: {e!s}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to start runtime: {str(e)}",
-            )
+                detail=f"Failed to start runtime: {e!s}",
+            ) from e
 
     @app.post("/stop-runtime")
     def stop_runtime():
@@ -297,11 +292,11 @@ def register_routes(app: FastAPI) -> None:
                 "message": "Camera runtime stopped",
             }
         except Exception as e:
-            logger.error(f"Failed to stop runtime: {e}")
+            logger.error(f"Failed to stop runtime: {e!s}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to stop runtime: {str(e)}",
-            )
+                detail=f"Failed to stop runtime: {e!s}",
+            ) from e
 
     @app.post("/start")
     def start():

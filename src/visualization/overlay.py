@@ -141,10 +141,8 @@ class OverlayRenderer:
                 annotated = self.annotator.draw_fps(annotated, fps)
 
             # Display
-            try:
+            with contextlib.suppress(Exception):
                 cv2.imshow(self.window_name, annotated)
-            except Exception:
-                pass
 
             # Handle key events
             try:
@@ -155,10 +153,8 @@ class OverlayRenderer:
             except Exception:
                 break
 
-        try:
+        with contextlib.suppress(Exception):
             cv2.destroyAllWindows()
-        except Exception:
-            pass
 
 
 class NoOpOverlayRenderer:
@@ -258,7 +254,6 @@ class HeadlessOverlayRenderer:
 
     def push_frame(self, frame: np.ndarray) -> None:
         """Push a frame for display (non-blocking)."""
-        pass
 
 
 def create_overlay_renderer(

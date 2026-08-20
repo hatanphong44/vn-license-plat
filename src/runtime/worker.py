@@ -24,7 +24,6 @@ from src.observability import get_profiler
 from src.pipeline.lpr_pipeline import LPRPipeline
 
 if TYPE_CHECKING:
-    from src.domain.models import LPRResult, CapturedPlate
     from src.visualization import OverlayRenderer
 
 logger = logging.getLogger("lpr.runtime.worker")
@@ -457,9 +456,8 @@ class LPRRuntimeWorker:
             if success:
                 logger.info(f"[EVENT] Published: plate={plate} conf={confidence:.3f}")
                 return True
-            else:
-                logger.error(f"[EVENT] Publish failed: plate={plate}")
-                return False
+            logger.error(f"[EVENT] Publish failed: plate={plate}")
+            return False
 
         except Exception as e:
             logger.error(f"Error publishing plate event: {e}")

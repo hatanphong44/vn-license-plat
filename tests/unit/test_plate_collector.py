@@ -248,7 +248,7 @@ class TestCollectionLogic:
         q = 10
         return f"{x1//q}_{y1//q}_{x2//q}_{y2//q}"
 
-    def _create_result(self, plate: str, confidence: float, box: list[int] = None) -> LPRResult:
+    def _create_result(self, plate: str, confidence: float, box: list[int] | None = None) -> LPRResult:
         """Helper to create LPRResult."""
         ocr = TextRecognition(
             text=plate,
@@ -299,7 +299,7 @@ class TestCollectionLogic:
         completed = collector.add_detections([self._create_result("ABC123", 0.85)])
 
         assert len(completed) == 1
-        box_key, best = completed[0]
+        _box_key, best = completed[0]
 
         # Best result should be ABC123 with highest confidence (0.94)
         assert best.plate_normalized == "ABC123"
@@ -381,7 +381,7 @@ class TestCollectionLogic:
             collector.add_detections([result])
         completed = collector.add_detections([result])
         assert len(completed) == 1
-        best1 = completed[0][1]
+        # best1 = completed[0][1]  # Would be used for further verification
 
         # Now simulate the same plate appearing again
         # The collection should restart (or be in cooldown)
@@ -398,7 +398,7 @@ class TestCollectionLogic:
         collector2.mark_sent(self._box_key_func(result))  # mark as sent
 
         # Adding more should be blocked by cooldown
-        is_complete, box_key = collector2.collector.add_detection(result)
+        is_complete, _box_key = collector2.collector.add_detection(result)
         assert is_complete is False, "Should be blocked by cooldown"
 
     def test_collection_collects_without_publishing(self):
@@ -426,7 +426,7 @@ class TestCollectionLogic:
         # Only at frame 20 (or timeout) should we get completed
         # For this test with max_frames=20, we won't complete yet
         assert len(collector.collector._collections) == 1
-        collection = list(collector.collector._collections.values())[0]
+        collection = next(iter(collector.collector._collections.values()))
         assert collection["collection"].size() == 10
 
     def test_ocr_variations_collected(self):

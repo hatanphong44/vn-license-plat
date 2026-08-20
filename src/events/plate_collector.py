@@ -8,7 +8,7 @@ Responsibilities (per PLAN.md):
 
 import logging
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from src.domain.models import (
     CapturedPlate,

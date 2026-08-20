@@ -14,6 +14,8 @@ import sys
 # Add src to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from fastapi import FastAPI  # noqa: TC002
+
 from src.api import create_app
 from src.camera import create_camera
 from src.config import Settings, get_settings
@@ -120,8 +122,8 @@ def _log_debug_startup(logger, settings: Settings, debug: bool) -> None:
 
     # Runtime config
     logger.info("  Runtime")
-    logger.info(f"    result window: 3.0s")
-    logger.info(f"    consensus ratio: 0.3")
+    logger.info("    result window: 3.0s")
+    logger.info("    consensus ratio: 0.3")
     logger.info("")
 
     logger.info("=" * 56)
@@ -257,7 +259,7 @@ def run_runtime(preview: bool = False, debug: bool = False):
     logger.info("=" * 56)
     logger.info("LPR Runtime starting")
     logger.info(f"Camera: {settings.camera.CAMERA_SOURCE}")
-    logger.info(f"Result window: 3.0s (continuous inference)")
+    logger.info("Result window: 3.0s (continuous inference)")
     if debug_mode:
         logger.info("DEBUG: enabled")
     logger.info("=" * 56)

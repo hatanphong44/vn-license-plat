@@ -8,7 +8,6 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
 
 logger = logging.getLogger("lpr.profiler")
 
@@ -142,7 +141,7 @@ class DebugProfiler:
 
     def inference_skipped(self) -> None:
         """Record skipped inference due to throttle (deprecated - no longer used)."""
-        pass  # No longer used
+        # No longer used
 
     def yolo_call(self, duration_ms: float) -> None:
         """Record YOLO inference time."""
@@ -180,11 +179,11 @@ class DebugProfiler:
 
     def collection_started(self) -> None:
         """Record a new collection started (deprecated - no longer used)."""
-        pass
+        # Deprecated - no longer used
 
     def collection_completed(self, size: int, timeout: bool = False) -> None:
         """Record a collection completed (deprecated - no longer used)."""
-        pass
+        # Deprecated - no longer used
 
     def window_finalized(self, window_id: int) -> None:
         """Record a window finalized."""
@@ -326,7 +325,7 @@ class DebugProfiler:
 
     def warn_collection_timeout(self, duration: float) -> None:
         """Warn about collection timeout (deprecated - no longer used)."""
-        pass
+        # Deprecated - no longer used
 
     def reset(self) -> None:
         """Reset all stats."""
