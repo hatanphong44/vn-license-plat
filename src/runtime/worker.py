@@ -30,6 +30,7 @@ logger = logging.getLogger("lpr.runtime.worker")
 
 # Window configuration
 RESULT_WINDOW_SECONDS = 3.0
+MIN_OBSERVATIONS_PER_WINDOW = 10  # Minimum observations required for finalization
 
 
 @dataclass
@@ -304,6 +305,26 @@ class LPRRuntimeWorker:
         total_observations = len(self._window_observations)
         valid_observations = [obs for obs in self._window_observations if obs.is_valid]
         invalid_observations = total_observations - len(valid_observations)
+
+        # Check minimum observation requirement
+        if total_observations < MIN_OBSERVATIONS_PER_WINDOW:
+            # Insufficient observations - do not publish
+            # Don't log here - the profiler captures this in debug mode
+            # and insufficient windows are expected behavior in production
+            window_result = WindowResult(
+                window_id=self._window_id,
+                duration=duration,
+                observations=total_observations,
+                valid_observations=len(valid_observations),
+                invalid_observations=invalid_observations,
+                unique_plates=list(set(obs.plate_normalized for obs in self._window_observations)),
+                candidate_counts=dict(Counter(obs.plate_normalized for obs in self._window_observations)),
+                result=None,
+                confidence=None,
+                action="INSUFFICIENT_OBSERVATIONS",
+            )
+            profiler.log_window_result(window_result, previous_result=self._last_published_plate)
+            return
 
         if not valid_observations:
             # No valid observations in this window
