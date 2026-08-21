@@ -317,7 +317,7 @@ class LPRRuntimeWorker:
                 observations=total_observations,
                 valid_observations=len(valid_observations),
                 invalid_observations=invalid_observations,
-                unique_plates=list(set(obs.plate_normalized for obs in self._window_observations)),
+                unique_plates=list({obs.plate_normalized for obs in self._window_observations}),
                 candidate_counts=dict(Counter(obs.plate_normalized for obs in self._window_observations)),
                 result=None,
                 confidence=None,

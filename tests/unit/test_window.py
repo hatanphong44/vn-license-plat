@@ -2,13 +2,13 @@
 
 from collections import Counter
 
-
 # Minimum observations required for finalization (matches worker.py)
 MIN_OBSERVATIONS_PER_WINDOW = 10
 
 
 class PlateObservation:
     """Mock observation for testing."""
+
     def __init__(self, plate_normalized: str, confidence: float = 0.9, is_valid: bool = True):
         self.plate_normalized = plate_normalized
         self.confidence = confidence
@@ -17,9 +17,16 @@ class PlateObservation:
 
 class WindowResult:
     """Mock window result for testing."""
-    def __init__(self, window_id: int, result: str | None, action: str,
-                 valid_observations: int = 0, invalid_observations: int = 0,
-                 candidate_counts: dict | None = None):
+
+    def __init__(
+        self,
+        window_id: int,
+        result: str | None,
+        action: str,
+        valid_observations: int = 0,
+        invalid_observations: int = 0,
+        candidate_counts: dict | None = None,
+    ):
         self.window_id = window_id
         self.result = result
         self.action = action
@@ -317,9 +324,9 @@ class TestEndToEndScenario:
             ["92CA03484"] * 10,  # Window 1
             ["92CA03484"] * 10,  # Window 2
             ["92CA03484"] * 10,  # Window 3
-            ["29A12345"] * 10,   # Window 4
-            ["29A12345"] * 10,   # Window 5
-            ["51B12345"] * 10,   # Window 6
+            ["29A12345"] * 10,  # Window 4
+            ["29A12345"] * 10,  # Window 5
+            ["51B12345"] * 10,  # Window 6
         ]
 
         published = []
@@ -340,8 +347,9 @@ class TestEndToEndScenario:
 
             print(f"Window {i}: {result or 'None'} → {final_action}")
 
-        assert published == ["92CA03484", "29A12345", "51B12345"], \
+        assert published == ["92CA03484", "29A12345", "51B12345"], (
             f"Expected 3 publishes, got: {published}"
+        )
 
     def test_invalid_plates_filtered_out(self):
         """Invalid plates like 038_2CA should be filtered before counting."""
@@ -474,11 +482,11 @@ class TestMinimumObservations:
             PlateObservation("92CA03484"),  # 5
             PlateObservation("92CA03484"),  # 6
             # Plate B occurrences
-            PlateObservation("29A12345"),   # 7
-            PlateObservation("29A12345"),   # 8
-            PlateObservation("29A12345"),   # 9
-            PlateObservation("29A12345"),   # 10
-            PlateObservation("29A12345"),    # 11
+            PlateObservation("29A12345"),  # 7
+            PlateObservation("29A12345"),  # 8
+            PlateObservation("29A12345"),  # 9
+            PlateObservation("29A12345"),  # 10
+            PlateObservation("29A12345"),  # 11
         ]
         result, action = resolve_window(observations)
         assert result == "92CA03484"  # Most frequent (6 vs 5)
