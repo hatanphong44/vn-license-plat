@@ -2,6 +2,9 @@
 # Test Dependencies - Lightweight, no GPU required
 # ============================================================
 
+# HTTP Client for TestClient (starlette dependency)
+httpx2>=0.25.0
+
 # Web Framework
 fastapi>=0.100.0
 

@@ -1,8 +1,12 @@
 """Runtime controller - Manages worker lifecycle."""
 
-import logging
+from __future__ import annotations
 
-from src.runtime.worker import LPRRuntimeWorker
+import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.runtime.worker import LPRRuntimeWorker
 
 logger = logging.getLogger("lpr.runtime.controller")
 
