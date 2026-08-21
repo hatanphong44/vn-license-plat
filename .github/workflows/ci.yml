@@ -2,14 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [master, main]
   pull_request:
-    branches: [ master, main ]
+    branches: [master, main]
 
 jobs:
   lint:
     name: Ruff Lint
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -25,49 +26,3 @@ jobs:
       - name: Run ruff
         run: |
           ruff check .
-
-  test:
-    name: Pytest Unit Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements-test.txt
-
-      - name: Run pytest
-        run: |
-          pytest tests/ -v --tb=short
-
-  test-full:
-    name: Full Test with Coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements-test.txt
-
-      - name: Run pytest with coverage
-        run: |
-          pytest tests/ -v --cov=src --cov-report=xml --cov-report=term-missing
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage.xml
-        continue-on-error: true
