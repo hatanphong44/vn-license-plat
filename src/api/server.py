@@ -221,11 +221,8 @@ def register_routes(app: FastAPI) -> None:
 
             # Create worker config
             worker_config = WorkerConfig(
-                inference_fps=settings.camera.INFERENCE_FPS,
                 reconnect_delay=settings.camera.CAMERA_RECONNECT_DELAY,
-                max_frames=settings.runtime.MAX_CAPTURE_FRAMES,
-                max_wait_seconds=settings.runtime.MAX_CAPTURE_WAIT_SECONDS,
-                cooldown_seconds=settings.runtime.PLATE_COOLDOWN_SECONDS,
+                preview=False,
             )
 
             # Create worker
@@ -255,7 +252,6 @@ def register_routes(app: FastAPI) -> None:
                 "status": "started",
                 "message": "Camera runtime started successfully",
                 "camera_source": camera.source,
-                "inference_fps": settings.camera.INFERENCE_FPS,
             }
 
         except HTTPException:

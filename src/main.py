@@ -225,8 +225,13 @@ def get_app() -> FastAPI:
 # Module-level app for uvicorn - lazy loaded when first accessed
 class _LazyApp:
     """Lazy wrapper that initializes app on first access."""
+    def __init__(self):
+        self._app = None
+
     def __getattr__(self, name):
-        return getattr(get_app(), name)
+        if self._app is None:
+            self._app = get_app()
+        return getattr(self._app, name)
 
 
 app = _LazyApp()
