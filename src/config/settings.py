@@ -121,11 +121,11 @@ class RuntimeSettings(BaseSettings):
         description="Max time to wait before sending (timeout)"
     )
     RESULT_WINDOW_SECONDS: float = Field(
-        default=3.0,
+        default=2.0,
         description="Duration of aggregation window in seconds"
     )
     MIN_OBSERVATIONS_PER_WINDOW: int = Field(
-        default=10,
+        default=5,
         description="Minimum observations required for finalization"
     )
 
