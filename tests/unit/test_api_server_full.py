@@ -31,18 +31,38 @@ class TestAPIServer:
         assert data["status"] == "ok"
         assert "timestamp" in data
 
-    def test_ready_endpoint(self):
-        """Test /ready endpoint."""
+    def test_ready_endpoint_without_pipeline(self):
+        """Test /ready endpoint without pipeline returns 503."""
         from src.api.server import create_app
 
         app = create_app()
         client = TestClient(app)
 
         response = client.get("/ready")
+        assert response.status_code == 503
+        data = response.json()
+        assert "status" in data["detail"]
+        assert "ready" in data["detail"]
+        assert data["detail"]["ready"] is False
+
+    def test_ready_endpoint_with_pipeline(self):
+        """Test /ready endpoint with pipeline returns 200."""
+        from src.api.server import create_app
+
+        # Create mock pipeline with all components
+        mock_pipeline = MagicMock()
+        mock_pipeline.plate_detector = MagicMock()
+        mock_pipeline.text_detector = MagicMock()
+        mock_pipeline.text_recognizer = MagicMock()
+
+        app = create_app(pipeline=mock_pipeline)
+        client = TestClient(app)
+
+        response = client.get("/ready")
         assert response.status_code == 200
         data = response.json()
-        assert "status" in data
-        assert "runtime_running" in data
+        assert data["ready"] is True
+        assert "gpu" in data
 
     def test_root_endpoint(self):
         """Test / endpoint."""

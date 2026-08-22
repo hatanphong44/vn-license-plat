@@ -6,12 +6,14 @@ No hard-coded values for model paths, camera URLs, GPU, confidence/IoU, etc.
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 from pydantic_settings import BaseSettings
 
 
 class ModelSettings(BaseSettings):
     """Model configuration."""
+
+    model_config = ConfigDict(env_prefix="")
 
     # Base directory for models
     MODEL_BASE_DIR: str = Field(
@@ -73,12 +75,11 @@ class ModelSettings(BaseSettings):
         description="Save best frames to disk"
     )
 
-    class Config:
-        env_prefix = ""
-
 
 class CameraSettings(BaseSettings):
     """Camera configuration."""
+
+    model_config = ConfigDict(env_prefix="")
 
     CAMERA_SOURCE: str = Field(
         default="0",
@@ -101,12 +102,11 @@ class CameraSettings(BaseSettings):
         description="Camera buffer size"
     )
 
-    class Config:
-        env_prefix = ""
-
 
 class RuntimeSettings(BaseSettings):
     """Runtime worker configuration."""
+
+    model_config = ConfigDict(env_prefix="")
 
     PLATE_COOLDOWN_SECONDS: float = Field(
         default=30.0,
@@ -120,13 +120,20 @@ class RuntimeSettings(BaseSettings):
         default=10.0,
         description="Max time to wait before sending (timeout)"
     )
-
-    class Config:
-        env_prefix = ""
+    RESULT_WINDOW_SECONDS: float = Field(
+        default=3.0,
+        description="Duration of aggregation window in seconds"
+    )
+    MIN_OBSERVATIONS_PER_WINDOW: int = Field(
+        default=10,
+        description="Minimum observations required for finalization"
+    )
 
 
 class EventSettings(BaseSettings):
     """Event publisher configuration."""
+
+    model_config = ConfigDict(env_prefix="")
 
     CALLBACK_URL: str = Field(
         default="",
@@ -145,16 +152,15 @@ class EventSettings(BaseSettings):
         description="Delay between retry attempts in seconds"
     )
 
-    class Config:
-        env_prefix = ""
-
 
 class VisualizationSettings(BaseSettings):
     """Visualization configuration."""
 
+    model_config = ConfigDict(env_prefix="")
+
     VISUALIZE: bool = Field(
-        default=True,
-        description="Enable/disable overlay"
+        default=False,
+        description="Enable/disable overlay (default False for Docker compatibility)"
     )
     DISPLAY_FPS: bool = Field(
         default=True,
@@ -181,12 +187,11 @@ class VisualizationSettings(BaseSettings):
         description="Text color (BGR)"
     )
 
-    class Config:
-        env_prefix = ""
-
 
 class LoggingSettings(BaseSettings):
     """Logging configuration."""
+
+    model_config = ConfigDict(env_prefix="")
 
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO",
@@ -200,9 +205,6 @@ class LoggingSettings(BaseSettings):
         default=True,
         description="Use colored output"
     )
-
-    class Config:
-        env_prefix = ""
 
 
 class Settings:

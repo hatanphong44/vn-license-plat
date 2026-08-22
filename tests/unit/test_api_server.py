@@ -21,17 +21,39 @@ class TestHealthEndpoints:
         assert data["status"] == "ok"
         assert "timestamp" in data
 
-    def test_ready_endpoint(self):
-        """Test /ready returns status."""
+    def test_ready_endpoint_without_pipeline(self):
+        """Test /ready returns 503 when no pipeline is configured."""
         app = create_app()
+        client = TestClient(app)
+        response = client.get("/ready")
+
+        # Without pipeline, /ready should return 503 as models are not ready
+        assert response.status_code == 503
+        data = response.json()
+        assert "status" in data["detail"]
+        assert "ready" in data["detail"]
+        assert data["detail"]["ready"] is False
+
+    def test_ready_endpoint_with_mock_pipeline(self):
+        """Test /ready returns 200 when pipeline is configured."""
+        from unittest.mock import MagicMock
+
+        # Create a mock pipeline with all model components
+        mock_pipeline = MagicMock()
+        mock_pipeline.plate_detector = MagicMock()
+        mock_pipeline.text_detector = MagicMock()
+        mock_pipeline.text_recognizer = MagicMock()
+
+        app = create_app(pipeline=mock_pipeline)
         client = TestClient(app)
         response = client.get("/ready")
 
         assert response.status_code == 200
         data = response.json()
+        assert data["ready"] is True
         assert "status" in data
-        assert "runtime_running" in data
-        assert "models" in data
+        assert "gpu" in data
+        assert "runtime" in data
 
     def test_root_endpoint(self):
         """Test / returns app info."""

@@ -188,6 +188,8 @@ def create_runtime(
         publisher=publisher,
         config=worker_config,
         overlay=overlay,
+        window_seconds=settings.runtime.RESULT_WINDOW_SECONDS,
+        min_observations=settings.runtime.MIN_OBSERVATIONS_PER_WINDOW,
     )
 
     if overlay is not None:
@@ -222,16 +224,24 @@ def get_app() -> FastAPI:
     return _app
 
 
-# Module-level app for uvicorn - lazy loaded when first accessed
+# Thread-safe lazy app initialization for uvicorn
+import threading
+
+_lazy_app_lock = threading.Lock()
+_lazy_app_instance = None
+
+
 class _LazyApp:
-    """Lazy wrapper that initializes app on first access."""
+    """Lazy wrapper that initializes app on first access with thread safety."""
     def __init__(self):
         self._app = None
 
     def __getattr__(self, name):
-        if self._app is None:
-            self._app = get_app()
-        return getattr(self._app, name)
+        global _lazy_app_instance
+        with _lazy_app_lock:
+            if _lazy_app_instance is None:
+                _lazy_app_instance = get_app()
+        return getattr(_lazy_app_instance, name)
 
 
 app = _LazyApp()

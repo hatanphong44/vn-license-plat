@@ -3,7 +3,7 @@
 Responsibilities:
 - 24/7 loop, lifecycle, recovery, reconnect, graceful shutdown
 - Continuous inference at GPU's actual speed
-- 3-second result windows with consensus voting
+- Configurable result windows with consensus voting
 - Deduplication between windows
 """
 
@@ -19,6 +19,7 @@ import cv2
 import numpy as np
 
 from src.camera.base import CameraBase
+from src.config import get_settings
 from src.events import EventPublisher
 from src.observability import get_profiler
 from src.pipeline.lpr_pipeline import LPRPipeline
@@ -27,10 +28,6 @@ if TYPE_CHECKING:
     from src.visualization import OverlayRenderer
 
 logger = logging.getLogger("lpr.runtime.worker")
-
-# Window configuration
-RESULT_WINDOW_SECONDS = 3.0
-MIN_OBSERVATIONS_PER_WINDOW = 10  # Minimum observations required for finalization
 
 
 @dataclass
@@ -73,7 +70,9 @@ class LPRRuntimeWorker:
     """24/7 LPR runtime worker.
 
     Manages the camera loop, inference, and event publishing.
-    Uses 3-second windows with consensus voting instead of tracking/collection.
+    Uses configurable windows with consensus voting instead of tracking/collection.
+
+    Supports graceful shutdown via SIGTERM/SIGINT signals.
     """
 
     def __init__(
@@ -86,8 +85,23 @@ class LPRRuntimeWorker:
         on_result: Callable | None = None,
         on_error: Callable | None = None,
         overlay: "OverlayRenderer | None" = None,
+        window_seconds: float = 3.0,
+        min_observations: int = 10,
     ):
-        """Initialize runtime worker."""
+        """Initialize runtime worker.
+
+        Args:
+            camera: Camera instance
+            pipeline: LPR pipeline
+            publisher: Event publisher
+            config: Worker configuration
+            on_frame: Optional callback for each frame
+            on_result: Optional callback for each result
+            on_error: Optional callback for errors
+            overlay: Optional overlay renderer
+            window_seconds: Duration of aggregation window in seconds
+            min_observations: Minimum observations required for finalization
+        """
         self.camera = camera
         self.pipeline = pipeline
         self.publisher = publisher
@@ -96,6 +110,10 @@ class LPRRuntimeWorker:
         self.on_result = on_result
         self.on_error = on_error
         self._overlay = overlay
+
+        # Window configuration (can be overridden via settings)
+        self._window_seconds = window_seconds
+        self._min_observations = min_observations
 
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -131,14 +149,18 @@ class LPRRuntimeWorker:
         self._thread = threading.Thread(
             target=self._run_loop,
             name="lpr-runtime-worker",
-            daemon=True,
+            daemon=False,
         )
         self._thread.start()
         self._running = True
         logger.info("LPR runtime worker started")
 
     def stop(self, timeout: float = 5.0) -> None:
-        """Stop the runtime worker gracefully."""
+        """Stop the runtime worker gracefully.
+
+        Args:
+            timeout: Maximum seconds to wait for worker thread to finish
+        """
         if not self._running:
             return
 
@@ -147,47 +169,96 @@ class LPRRuntimeWorker:
 
         if self._thread is not None:
             self._thread.join(timeout=timeout)
+            if self._thread.is_alive():
+                logger.warning("Worker thread did not stop within timeout")
 
         if self._overlay is not None:
-            self._overlay.stop()
+            try:
+                self._overlay.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping overlay: {e}")
 
         self._running = False
         logger.info("LPR runtime worker stopped")
 
     def _run_loop(self) -> None:
-        """Main runtime loop."""
+        """Main runtime loop with graceful shutdown support.
+
+        Note: Signal handlers should be registered in the main thread
+        for proper handling. This method uses the stop_event for
+        graceful shutdown coordination.
+        """
         logger.info("=" * 56)
         logger.info("STARTING 24/7 LPR CAMERA WORKER")
         logger.info(f"Camera: {self.camera.source}")
-        logger.info(f"Result window: {RESULT_WINDOW_SECONDS}s")
+        logger.info(f"Result window: {self._window_seconds}s")
+        logger.info(f"Min observations: {self._min_observations}")
         logger.info("=" * 56)
 
-        while not self._stop_event.is_set():
+        try:
+            while not self._stop_event.is_set():
 
-            try:
-                if not self.camera.connect():
-                    logger.error("Camera connection failed")
+                try:
+                    if not self.camera.connect():
+                        logger.error("Camera connection failed")
+                        self._wait_with_check(self.config.reconnect_delay)
+                        continue
+
+                    logger.info("Camera connected")
+
+                    self._inference_loop()
+
+                except (KeyboardInterrupt, SystemExit):
+                    logger.info("Received shutdown signal in main loop")
+                    break
+
+                except Exception as e:
+                    logger.error(f"Worker error: {e}")
+                    if self.on_error:
+                        self.on_error(e)
+
+                finally:
+                    # Always disconnect camera on loop iteration end
+                    try:
+                        self.camera.disconnect()
+                    except Exception as e:
+                        logger.warning(f"Error disconnecting camera: {e}")
+
+                if not self._stop_event.is_set():
+                    logger.info(f"Reconnecting in {self.config.reconnect_delay}s...")
                     self._wait_with_check(self.config.reconnect_delay)
-                    continue
 
-                logger.info("Camera connected")
-
-                self._inference_loop()
-
-            except Exception as e:
-                logger.error(f"Worker error: {e}")
-                if self.on_error:
-                    self.on_error(e)
-
-            finally:
-                if self.camera:
-                    self.camera.disconnect()
-
-            if not self._stop_event.is_set():
-                logger.info(f"Reconnecting in {self.config.reconnect_delay}s...")
-                self._wait_with_check(self.config.reconnect_delay)
+        finally:
+            # Final cleanup - ensure camera is released
+            self._cleanup()
 
         logger.info("Runtime loop ended")
+
+    def _cleanup(self) -> None:
+        """Perform final cleanup - release all resources."""
+        logger.info("Performing final cleanup...")
+
+        # Stop camera reconnection attempts
+        if hasattr(self.camera, 'stop'):
+            try:
+                self.camera.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping camera: {e}")
+
+        # Disconnect camera
+        try:
+            self.camera.disconnect()
+        except Exception as e:
+            logger.warning(f"Error disconnecting camera during cleanup: {e}")
+
+        # Finalize current window if there are observations
+        if self._window_observations:
+            logger.info(f"Finalizing window with {len(self._window_observations)} observations")
+
+        # Clear observation buffer
+        self._window_observations = []
+
+        logger.info("Cleanup complete")
 
     def _inference_loop(self) -> None:
         """Run continuous inference loop until stop or disconnect."""
@@ -284,11 +355,11 @@ class LPRRuntimeWorker:
                 )
 
     def _check_window_completion(self, profiler) -> None:
-        """Check if 3-second window is complete and finalize if needed."""
+        """Check if window is complete and finalize if needed."""
         now = time.time()
         elapsed = now - self._window_start
 
-        if elapsed >= RESULT_WINDOW_SECONDS:
+        if elapsed >= self._window_seconds:
             self._finalize_window(profiler)
             # Start new window immediately
             self._window_id += 1
@@ -296,7 +367,7 @@ class LPRRuntimeWorker:
             self._window_observations = []
 
     def _finalize_window(self, profiler) -> None:
-        """Finalize the current 3-second window and potentially publish."""
+        """Finalize the current window and potentially publish."""
         window_start_time = self._window_start
         duration = time.time() - window_start_time
 
@@ -307,40 +378,40 @@ class LPRRuntimeWorker:
         invalid_observations = total_observations - len(valid_observations)
 
         # Check minimum observation requirement
-        if total_observations < MIN_OBSERVATIONS_PER_WINDOW:
+        if total_observations < self._min_observations:
             # Insufficient observations - do not publish
-            # Don't log here - the profiler captures this in debug mode
-            # and insufficient windows are expected behavior in production
-            window_result = WindowResult(
-                window_id=self._window_id,
-                duration=duration,
-                observations=total_observations,
-                valid_observations=len(valid_observations),
-                invalid_observations=invalid_observations,
-                unique_plates=list({obs.plate_normalized for obs in self._window_observations}),
-                candidate_counts=dict(Counter(obs.plate_normalized for obs in self._window_observations)),
-                result=None,
-                confidence=None,
-                action="INSUFFICIENT_OBSERVATIONS",
-            )
-            profiler.log_window_result(window_result, previous_result=self._last_published_plate)
+            if profiler.enabled:
+                window_result = WindowResult(
+                    window_id=self._window_id,
+                    duration=duration,
+                    observations=total_observations,
+                    valid_observations=len(valid_observations),
+                    invalid_observations=invalid_observations,
+                    unique_plates=list({obs.plate_normalized for obs in self._window_observations}),
+                    candidate_counts=dict(Counter(obs.plate_normalized for obs in self._window_observations)),
+                    result=None,
+                    confidence=None,
+                    action="INSUFFICIENT_OBSERVATIONS",
+                )
+                profiler.log_window_result(window_result, previous_result=self._last_published_plate)
             return
 
         if not valid_observations:
             # No valid observations in this window
-            window_result = WindowResult(
-                window_id=self._window_id,
-                duration=duration,
-                observations=total_observations,
-                valid_observations=0,
-                invalid_observations=invalid_observations,
-                unique_plates=[],
-                candidate_counts={},
-                result=None,
-                confidence=None,
-                action="NO_CONFIDENT_RESULT",
-            )
-            profiler.log_window_result(window_result, previous_result=self._last_published_plate)
+            if profiler.enabled:
+                window_result = WindowResult(
+                    window_id=self._window_id,
+                    duration=duration,
+                    observations=total_observations,
+                    valid_observations=0,
+                    invalid_observations=invalid_observations,
+                    unique_plates=[],
+                    candidate_counts={},
+                    result=None,
+                    confidence=None,
+                    action="NO_CONFIDENT_RESULT",
+                )
+                profiler.log_window_result(window_result, previous_result=self._last_published_plate)
             return
 
         # Count only valid observations for frequency
@@ -350,19 +421,20 @@ class LPRRuntimeWorker:
         most_common_plates = valid_plate_counts.most_common()
 
         if not most_common_plates:
-            window_result = WindowResult(
-                window_id=self._window_id,
-                duration=duration,
-                observations=total_observations,
-                valid_observations=len(valid_observations),
-                invalid_observations=invalid_observations,
-                unique_plates=[],
-                candidate_counts={},
-                result=None,
-                confidence=None,
-                action="NO_CONFIDENT_RESULT",
-            )
-            profiler.log_window_result(window_result, previous_result=self._last_published_plate)
+            if profiler.enabled:
+                window_result = WindowResult(
+                    window_id=self._window_id,
+                    duration=duration,
+                    observations=total_observations,
+                    valid_observations=len(valid_observations),
+                    invalid_observations=invalid_observations,
+                    unique_plates=[],
+                    candidate_counts={},
+                    result=None,
+                    confidence=None,
+                    action="NO_CONFIDENT_RESULT",
+                )
+                profiler.log_window_result(window_result, previous_result=self._last_published_plate)
             return
 
         # Check for tie: if top 2 candidates have the same count
@@ -371,19 +443,20 @@ class LPRRuntimeWorker:
             second_count = most_common_plates[1][1]
             if first_count == second_count:
                 # Tie - cannot determine winner
-                window_result = WindowResult(
-                    window_id=self._window_id,
-                    duration=duration,
-                    observations=total_observations,
-                    valid_observations=len(valid_observations),
-                    invalid_observations=invalid_observations,
-                    unique_plates=list(valid_plate_counts.keys()),
-                    candidate_counts=dict(valid_plate_counts),
-                    result=None,
-                    confidence=None,
-                    action="NO_CONFIDENT_RESULT",
-                )
-                profiler.log_window_result(window_result, previous_result=self._last_published_plate)
+                if profiler.enabled:
+                    window_result = WindowResult(
+                        window_id=self._window_id,
+                        duration=duration,
+                        observations=total_observations,
+                        valid_observations=len(valid_observations),
+                        invalid_observations=invalid_observations,
+                        unique_plates=list(valid_plate_counts.keys()),
+                        candidate_counts=dict(valid_plate_counts),
+                        result=None,
+                        confidence=None,
+                        action="NO_CONFIDENT_RESULT",
+                    )
+                    profiler.log_window_result(window_result, previous_result=self._last_published_plate)
                 return
 
         # Winner is the plate with the highest frequency
@@ -396,33 +469,44 @@ class LPRRuntimeWorker:
         ]
         avg_confidence = sum(winning_confidences) / len(winning_confidences)
 
-        window_result = WindowResult(
-            window_id=self._window_id,
-            duration=duration,
-            observations=total_observations,
-            valid_observations=len(valid_observations),
-            invalid_observations=invalid_observations,
-            unique_plates=list(valid_plate_counts.keys()),
-            candidate_counts=dict(valid_plate_counts),
-            result=most_common_plate,
-            confidence=avg_confidence,
-            action="",  # Will be set below
-        )
-
         # Deduplication: compare with last published
         if most_common_plate == self._last_published_plate:
-            window_result.action = "SKIP_DUPLICATE"
-            profiler.log_window_result(window_result, previous_result=self._last_published_plate)
+            if profiler.enabled:
+                window_result = WindowResult(
+                    window_id=self._window_id,
+                    duration=duration,
+                    observations=total_observations,
+                    valid_observations=len(valid_observations),
+                    invalid_observations=invalid_observations,
+                    unique_plates=list(valid_plate_counts.keys()),
+                    candidate_counts=dict(valid_plate_counts),
+                    result=most_common_plate,
+                    confidence=avg_confidence,
+                    action="SKIP_DUPLICATE",
+                )
+                profiler.log_window_result(window_result, previous_result=self._last_published_plate)
         else:
             # Publish new plate
-            window_result.action = "PUBLISH"
             success = self._publish_plate(
                 most_common_plate, avg_confidence, len(valid_observations), duration, profiler
             )
             if success:
                 self._last_published_plate = most_common_plate
 
-            profiler.log_window_result(window_result, previous_result=self._last_published_plate)
+            if profiler.enabled:
+                window_result = WindowResult(
+                    window_id=self._window_id,
+                    duration=duration,
+                    observations=total_observations,
+                    valid_observations=len(valid_observations),
+                    invalid_observations=invalid_observations,
+                    unique_plates=list(valid_plate_counts.keys()),
+                    candidate_counts=dict(valid_plate_counts),
+                    result=most_common_plate,
+                    confidence=avg_confidence,
+                    action="PUBLISH",
+                )
+                profiler.log_window_result(window_result, previous_result=self._last_published_plate)
 
     def _publish_plate(self, plate: str, confidence: float, observations: int,
                       window_duration: float, profiler) -> bool:

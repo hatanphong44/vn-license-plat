@@ -86,8 +86,6 @@ class LPRPipeline:
 
         profiler.yolo_call(yolo_ms)
 
-        # Per-frame logging disabled - only summary logging in debug mode
-
         # Step 2-6: Process each plate
         for plate_idx, plate_det in enumerate(plate_detections):
             result = self._process_plate(
@@ -99,7 +97,6 @@ class LPRPipeline:
 
             if result and result.has_text():
                 results.append(result)
-                # Per-detection logging disabled - only summary logging in debug mode
 
         return results
 

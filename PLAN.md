@@ -73,9 +73,9 @@ lpr-runtime/
 │       └── metrics.py
 ├── configs/
 ├── models/
-│   ├── plate_detector/
-│   ├── text_detector/
-│   └── text_recognizer/
+│   ├── Plate.pt                 # YOLO plate detector
+│   ├── PP-OCRv6_small_det/     # OCR text detector
+│   └── PP-OCRv6_small_rec/     # OCR text recognizer
 ├── tests/
 │   ├── unit/
 │   ├── integration/
@@ -341,7 +341,7 @@ TEST_SAVE_FRAME=False     # Save best frames to disk
 ```bash
 # 1. Cài môi trường
 pip install -U paddleocr
-pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/
+pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu124/
 pip install -q -U ultralytics
 
 # 2. Verify GPU
@@ -399,8 +399,8 @@ verify_gpu()
 # Cài đặt PaddleOCR
 !pip install -U paddleocr
 
-# Cài đặt PaddlePaddle GPU (CUDA 13.0)
-!pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/
+# Cài đặt PaddlePaddle GPU (CUDA 12.4)
+!pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu124/
 
 # Cài đặt Ultralytics (YOLO)
 !pip install -q -U ultralytics

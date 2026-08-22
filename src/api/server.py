@@ -9,6 +9,7 @@ import logging
 import threading
 import time
 from datetime import UTC, datetime
+from enum import Enum
 
 import cv2
 import numpy as np
@@ -19,6 +20,15 @@ from src.pipeline.lpr_pipeline import LPRPipeline
 from src.runtime.controller import RuntimeController, get_controller
 
 logger = logging.getLogger("lpr.api")
+
+
+class ReadinessState(str, Enum):
+    """Readiness state enumeration."""
+    INITIALIZING = "initializing"
+    MODELS_LOADING = "models_loading"
+    READY = "ready"
+    ERROR = "error"
+    STOPPED = "stopped"
 
 
 def create_app(
@@ -48,6 +58,10 @@ def create_app(
     app.state.worker = None
     app.state.runtime_thread = None
 
+    # Readiness tracking
+    app.state.readiness_state = ReadinessState.INITIALIZING
+    app.state.readiness_details = {}
+
     # CORS middleware
     app.add_middleware(
         CORSMiddleware,
@@ -68,7 +82,11 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/health")
     def health():
-        """Health check endpoint."""
+        """Health check endpoint - lightweight liveness probe.
+
+        Returns 200 if the process is alive and the API is responding.
+        Does NOT verify models or GPU availability.
+        """
         return {
             "status": "ok",
             "timestamp": datetime.now(UTC).isoformat(),
@@ -76,21 +94,113 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/ready")
     def ready():
-        """Readiness check endpoint."""
+        """Readiness check endpoint - verifies runtime readiness.
+
+        Checks:
+        - Model initialization state
+        - GPU availability (when GPU mode is configured)
+        - Runtime worker state
+
+        Returns appropriate HTTP status:
+        - 200: Service is ready
+        - 503: Service is not ready (with details)
+        """
         controller = app.state.controller
+        pipeline = app.state.pipeline
+
+        # Determine readiness state
+        is_ready = True
+        status = "ready"
+        details = {
+            "models": {},
+            "gpu": {},
+            "runtime": {},
+        }
+
+        # Check pipeline and models
+        if pipeline is None:
+            details["models"]["status"] = "not_configured"
+            is_ready = False
+            status = "starting"
+        else:
+            # Check each model component
+            plate_detector_ready = pipeline.plate_detector is not None
+            text_detector_ready = pipeline.text_detector is not None
+            text_recognizer_ready = pipeline.text_recognizer is not None
+
+            details["models"] = {
+                "plate_detector": "ready" if plate_detector_ready else "not_loaded",
+                "text_detector": "ready" if text_detector_ready else "not_loaded",
+                "text_recognizer": "ready" if text_recognizer_ready else "not_loaded",
+                "status": "ready" if all([plate_detector_ready, text_detector_ready, text_recognizer_ready]) else "partial",
+            }
+
+            if not all([plate_detector_ready, text_detector_ready, text_recognizer_ready]):
+                is_ready = False
+                status = "models_not_ready"
+
+        # Check GPU availability
+        try:
+            import torch
+            cuda_available = torch.cuda.is_available()
+            details["gpu"]["cuda_available"] = cuda_available
+            if cuda_available:
+                details["gpu"]["cuda_version"] = torch.version.cuda
+                details["gpu"]["gpu_count"] = torch.cuda.device_count()
+                if torch.cuda.device_count() > 0:
+                    details["gpu"]["gpu_name"] = torch.cuda.get_device_name(0)
+        except ImportError:
+            details["gpu"]["cuda_available"] = False
+            details["gpu"]["error"] = "PyTorch not available"
+
+        # Check PaddlePaddle GPU
+        try:
+            import paddle
+            paddle_gpu = paddle.device.is_compiled_with_cuda()
+            details["gpu"]["paddle_gpu"] = paddle_gpu
+            if paddle_gpu:
+                paddle_gpu_count = paddle.device.cuda.device_count()
+                details["gpu"]["paddle_gpu_count"] = paddle_gpu_count
+        except ImportError:
+            details["gpu"]["paddle_gpu"] = False
+            details["gpu"]["error"] = "PaddlePaddle not available"
+
+        # Check runtime state
         runtime_ready = controller.is_running
         camera = getattr(app.state, "camera", None)
         camera_source = camera.source if camera else None
+        camera_connected = camera.is_connected() if camera else False
+
+        details["runtime"] = {
+            "worker_running": runtime_ready,
+            "camera_connected": camera_connected,
+            "camera_source": camera_source,
+        }
+
+        # Determine overall readiness
+        runtime_ready_state = runtime_ready or camera_connected
+
+        if status == "ready" and not runtime_ready_state:
+            status = "ready_no_camera"
+        elif status == "ready" and runtime_ready_state:
+            status = "ready"
+
+        # Return appropriate HTTP status
+        if not is_ready:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "status": status,
+                    "ready": False,
+                    **details,
+                },
+            )
 
         return {
-            "status": "ready" if runtime_ready else "starting",
-            "runtime_running": runtime_ready,
-            "camera_source": camera_source,
-            "models": {
-                "plate_detection": "loaded",
-                "ocr_detection": "loaded",
-                "ocr_recognition": "loaded",
-            },
+            "status": status,
+            "ready": True,
+            "timestamp": datetime.now(UTC).isoformat(),
+            **details,
         }
 
     @app.get("/metrics")
